@@ -132,7 +132,28 @@ _RENDER_SCRIPT_JS = """
     node.insertBefore(t, node.firstChild);
   }
   function renderLevel(rc, svg, data) {
+    // Corridors and doors first, rooms on top with an opaque floor: a
+    // corridor that happens to route close to an unrelated room must
+    // disappear behind its wall, not read as cutting through it.
+    data.corridors.forEach(function (c) {
+      if (c.points.length < 2) return;
+      var node = rc.linearPath(c.points, {
+        stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, bowing: 1.8, seed: seedFor(c.id, 3),
+      });
+      addTitle(node, c.title);
+      svg.appendChild(node);
+    });
+    data.doors.forEach(function (d) {
+      var stub1 = rc.line(d.x1, d.y1, d.gx1, d.gy1, { stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, seed: seedFor(d.id, 4) });
+      var stub2 = rc.line(d.gx2, d.gy2, d.x2, d.y2, { stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, seed: seedFor(d.id, 5) });
+      svg.appendChild(stub1); svg.appendChild(stub2);
+    });
     data.rooms.forEach(function (r) {
+      var floor = rc.rectangle(r.x, r.y, r.w, r.h, {
+        fill: 'var(--bg)', fillStyle: 'solid', stroke: 'none', roughness: 0,
+      });
+      floor.setAttribute('class', 'dg-map-room-floor');
+      svg.appendChild(floor);
       var stripe = rc.rectangle(r.x, r.y, r.w, 6, {
         fill: 'var(--' + r.hue + ')', fillStyle: 'hachure', hachureGap: 3, fillWeight: 1.6,
         stroke: 'none', roughness: 1.4, seed: seedFor(r.id, 1),
@@ -151,20 +172,12 @@ _RENDER_SCRIPT_JS = """
       text.textContent = r.id;
       svg.appendChild(text);
     });
-    data.corridors.forEach(function (c) {
-      if (c.points.length < 2) return;
-      var node = rc.linearPath(c.points, {
-        stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, bowing: 1.8, seed: seedFor(c.id, 3),
-      });
-      addTitle(node, c.title);
-      svg.appendChild(node);
-    });
+    // The door bar itself is drawn last of the "structural" layer, on top
+    // of the room floors, so it stays visible right at the threshold.
     data.doors.forEach(function (d) {
-      var stub1 = rc.line(d.x1, d.y1, d.gx1, d.gy1, { stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, seed: seedFor(d.id, 4) });
-      var stub2 = rc.line(d.gx2, d.gy2, d.x2, d.y2, { stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, seed: seedFor(d.id, 5) });
       var bar = rc.line(d.px1, d.py1, d.px2, d.py2, { stroke: 'var(--rust)', strokeWidth: 5, roughness: 2.1, seed: seedFor(d.id, 6) });
       addTitle(bar, d.title);
-      svg.appendChild(stub1); svg.appendChild(stub2); svg.appendChild(bar);
+      svg.appendChild(bar);
     });
     data.stairs.forEach(function (s) {
       var tri = rc.polygon(s.points, { fill: 'var(--plum)', fillStyle: 'solid', stroke: 'var(--plum)', roughness: 1.7, seed: seedFor(s.id, 7) });
@@ -297,7 +310,8 @@ def _level_payload(level: int, islands: list[dict]) -> dict:
             length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
             ux, uy = ddx / length, ddy / length
             perp_x, perp_y = -uy, ux
-            gap_x, gap_y = ux * 10, uy * 10
+            gap_half = min(length * 0.35, 6.0)
+            gap_x, gap_y = ux * gap_half, uy * gap_half
             doors.append({
                 "id": door["id"], "x1": x1, "y1": y1, "x2": x2, "y2": y2,
                 "gx1": mx - gap_x, "gy1": my - gap_y, "gx2": mx + gap_x, "gy2": my + gap_y,

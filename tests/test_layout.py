@@ -1,6 +1,8 @@
+import math
+
 from dungeon_simulator.generator import DungeonGenerator
 from dungeon_simulator.layout import compute_layout
-from dungeon_simulator.render_map import render_map_section
+from dungeon_simulator.render_map import _level_payload, render_map_section
 
 
 def _bbox(island):
@@ -41,6 +43,44 @@ def test_islands_on_the_same_level_do_not_overlap():
         spans = sorted(_bbox(isl) for isl in islands)
         for (_, prev_max), (next_min, _) in zip(spans, spans[1:]):
             assert next_min >= prev_max  # islands are laid out left-to-right, never overlapping
+
+
+def _room_rect(room):
+    xs = [c[0] for c in room["corners"]]
+    ys = [c[1] for c in room["corners"]]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _rects_overlap(a, b, margin=-0.01):
+    return not (a[2] + margin <= b[0] or b[2] + margin <= a[0]
+                or a[3] + margin <= b[1] or b[3] + margin <= a[1])
+
+
+def test_rooms_in_the_same_island_never_overlap():
+    for seed in range(80):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for islands in layout.values():
+            for island in islands:
+                rects = [_room_rect(r) for r in island["rooms"]]
+                for i, a in enumerate(rects):
+                    for b in rects[i + 1:]:
+                        assert not _rects_overlap(a, b), f"seed {seed}: two rooms overlap"
+
+
+def test_door_stubs_never_have_negative_length():
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for level, islands in layout.items():
+            for island in islands:
+                payload = _level_payload(level, [island])
+                for door in payload["doors"]:
+                    total = math.hypot(door["x2"] - door["x1"], door["y2"] - door["y1"])
+                    stub1 = math.hypot(door["gx1"] - door["x1"], door["gy1"] - door["y1"])
+                    stub2 = math.hypot(door["x2"] - door["gx2"], door["y2"] - door["gy2"])
+                    assert stub1 <= total / 2 + 1e-6
+                    assert stub2 <= total / 2 + 1e-6
 
 
 def test_root_island_is_flagged_as_entrance():
