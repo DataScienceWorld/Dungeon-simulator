@@ -93,15 +93,30 @@ def _segment_crosses_room(p0, p1, bbox, pad: float = 0.05) -> bool:
     return False
 
 
-def _detour_around(prev, entry, blockers, margin: float = 1.0):
+_DETOUR_MARGIN = 1.0
+_DETOUR_MIN_LEG = 1.1  # keep at least this much of the *original* approach axis
+# right before prev and right after entry - dungeongen (and a human reading
+# the map) expects a corridor to meet a room head-on, perpendicular to its
+# wall. A jog that runs all the way up to the wall's own coordinate arrives
+# parallel to it instead - dungeongen then can't place a door there at all,
+# and the room reads as unconnected (see the regression check below). Must
+# stay above 1.0: dungeongen rounds our grid units to whole cells, and
+# anything closer than a full unit can round down to the *same* cell as the
+# wall it's supposed to be standing clear of, silently recreating the same
+# parallel-approach bug one rounding step later.
+
+
+def _detour_around(prev, entry, blockers, margin: float = _DETOUR_MARGIN):
     """A room can end up pushed clear of every *other room* yet still have
     its straight connecting corridor cut through some third room that
     happened to sit between the door and its new position (the push-back in
     _walk_room only checks the room's own footprint, not the path leading to
-    it). Route around the union of whatever it crosses instead: a single
-    sideways jog wide enough to clear them, added to the trunk `path.points`
-    so it renders as a corridor bend rather than a line straight through
-    someone else's walls."""
+    it). Route around the union of whatever it crosses instead: a sideways
+    jog wide enough to clear them, added to the trunk `path.points` so it
+    renders as a corridor bend rather than a line straight through someone
+    else's walls. `prev` and `entry` keep their original approach axis (only
+    the middle of the path moves sideways) so both ends still meet their
+    room's wall perpendicular, the way a door needs to."""
     x0, y0 = prev
     x1, y1 = entry
     if abs(x0 - x1) < 1e-9 and abs(y0 - y1) > 1e-9:
@@ -109,13 +124,33 @@ def _detour_around(prev, entry, blockers, margin: float = 1.0):
         bx1 = max(b[2] for b in blockers)
         left, right = bx0 - margin, bx1 + margin
         jog_x = left if abs(x0 - left) <= abs(x0 - right) else right
-        return [(jog_x, y0), (jog_x, y1)]
+        by0 = min(b[1] for b in blockers)
+        by1 = max(b[3] for b in blockers)
+        if y0 < y1:
+            near, far = by0 - margin, by1 + margin
+            near = min(near, y0 + _DETOUR_MIN_LEG)
+            far = min(max(far, near + _DETOUR_MIN_LEG), y1 - _DETOUR_MIN_LEG)
+        else:
+            near, far = by1 + margin, by0 - margin
+            near = max(near, y0 - _DETOUR_MIN_LEG)
+            far = max(min(far, near - _DETOUR_MIN_LEG), y1 + _DETOUR_MIN_LEG)
+        return [(x0, near), (jog_x, near), (jog_x, far), (x1, far)]
     if abs(y0 - y1) < 1e-9 and abs(x0 - x1) > 1e-9:
         by0 = min(b[1] for b in blockers)
         by1 = max(b[3] for b in blockers)
         top, bottom = by0 - margin, by1 + margin
         jog_y = top if abs(y0 - top) <= abs(y0 - bottom) else bottom
-        return [(x0, jog_y), (x1, jog_y)]
+        bx0 = min(b[0] for b in blockers)
+        bx1 = max(b[2] for b in blockers)
+        if x0 < x1:
+            near, far = bx0 - margin, bx1 + margin
+            near = min(near, x0 + _DETOUR_MIN_LEG)
+            far = min(max(far, near + _DETOUR_MIN_LEG), x1 - _DETOUR_MIN_LEG)
+        else:
+            near, far = bx1 + margin, bx0 - margin
+            near = max(near, x0 - _DETOUR_MIN_LEG)
+            far = max(min(far, near - _DETOUR_MIN_LEG), x1 + _DETOUR_MIN_LEG)
+        return [(near, y0), (near, jog_y), (far, jog_y), (far, y1)]
     return []
 
 

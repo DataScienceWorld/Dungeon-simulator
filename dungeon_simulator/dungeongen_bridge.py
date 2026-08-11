@@ -71,12 +71,88 @@ def _dedupe(points: list[tuple]) -> list[tuple]:
     return deduped
 
 
+def _is_axis_aligned_path(waypoints) -> bool:
+    return all(a[0] == b[0] or a[1] == b[1] for a, b in zip(waypoints, waypoints[1:]))
+
+
 def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     dx, dy = point[0] - cx, point[1] - cy
     if abs(dx) > abs(dy):
         return "east" if dx > 0 else "west"
     return "south" if dy > 0 else "north"
+
+
+def _wall_for_approach(point, neighbor, bounds) -> str | None:
+    """Which wall of `bounds` `point` is approached through, going by the
+    *direction of travel* from `neighbor` rather than blind coordinate
+    matching - a point can sit exactly on two bbox edges at once (e.g. a
+    small room's bounds were widened by the size floor above and now
+    coincide, on one axis, with the corridor's own coordinate), and matching
+    by coordinate alone can pick the wrong one. Returns None - "don't know,
+    leave it alone" - for anything that isn't a clean, unambiguous case,
+    rather than guess: a wrong guess here previously produced a self-crossing
+    waypoint list that made dungeongen's own layout code hang."""
+    wx, wy = point
+    nx, ny = neighbor
+    x0, y0, x1, y1 = bounds
+    if nx == wx and ny != wy:
+        if wy == y0:
+            return "north"
+        if wy == y1:
+            return "south"
+    elif ny == wy and nx != wx:
+        if wx == x0:
+            return "west"
+        if wx == x1:
+            return "east"
+    return None
+
+
+def _ensure_perpendicular_approach(waypoints, bounds, at_start: bool):
+    """layout.py's geometry is in continuous grid units (frequently landing on
+    half units), but dungeongen wants integer cells - rounding two nearby
+    points can collapse them onto the same integer, or onto the room wall's
+    own coordinate. Either way the corridor ends up running parallel to the
+    wall instead of meeting it head-on, and dungeongen silently fails to
+    place a door there (the room then looks unconnected). Detect that and
+    splice in a one-cell perpendicular stub so the last hop is always a
+    proper, wall-normal approach."""
+    point = waypoints[0] if at_start else waypoints[-1]
+    neighbor = waypoints[1] if at_start else waypoints[-2]
+    wall = _wall_for_approach(point, neighbor, bounds)
+    if wall is not None:
+        return waypoints  # already a clean, perpendicular approach
+    # Not a recognizable perpendicular approach - but only patch it up when
+    # `point` unambiguously sits on exactly one wall; anything else (a
+    # corner, or floating off every wall entirely) is left untouched rather
+    # than risked.
+    wx, wy = point
+    x0, y0, x1, y1 = bounds
+    on_walls = [w for w, hit in (
+        ("west", wx == x0), ("east", wx == x1), ("north", wy == y0), ("south", wy == y1),
+    ) if hit]
+    if len(on_walls) != 1:
+        return waypoints
+    wall = on_walls[0]
+    stub = {
+        "west": (wx - 1, wy), "east": (wx + 1, wy),
+        "north": (wx, wy - 1), "south": (wx, wy + 1),
+    }[wall]
+    # A single stub can only be spliced in without creating a diagonal
+    # (non-grid) segment if it shares an axis with `neighbor` - which isn't
+    # guaranteed here (that's exactly why _wall_for_approach came back
+    # empty-handed above). A diagonal waypoint is worse than the bug this is
+    # trying to fix: dungeongen's own layout code has no concept of a
+    # non-axis-aligned passage and can hang trying to route one. When a
+    # clean, non-diagonal splice isn't possible, leave the approach as-is.
+    if neighbor[0] != stub[0] and neighbor[1] != stub[1]:
+        return waypoints
+    if at_start:
+        rest = [p for p in waypoints[1:] if p != stub]
+        return _dedupe([waypoints[0], stub, *rest]) if rest else [waypoints[0], stub]
+    rest = [p for p in waypoints[:-1] if p != stub]
+    return _dedupe([*rest, stub, waypoints[-1]]) if rest else [stub, waypoints[-1]]
 
 
 def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
@@ -125,6 +201,16 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         waypoints = _dedupe([(_grid(px), _grid(py)) for px, py in points])
         if len(waypoints) < 2:
             continue
+        waypoints = _ensure_perpendicular_approach(waypoints, from_info[1:], at_start=True)
+        waypoints = _ensure_perpendicular_approach(waypoints, to_info[1:], at_start=False)
+        if not _is_axis_aligned_path(waypoints):
+            # Never hand dungeongen a diagonal waypoint - its own layout code
+            # has no concept of one and has been observed to hang trying to
+            # route it, rather than raising a catchable error. Fall back to
+            # the pre-fixup, still axis-aligned waypoints instead.
+            waypoints = _dedupe([(_grid(px), _grid(py)) for px, py in points])
+            if len(waypoints) < 2:
+                continue
 
         from_id, to_id = from_info[0], to_info[0]
         passage = _DGPassage(start_room=from_id, end_room=to_id, waypoints=waypoints, width=1)
