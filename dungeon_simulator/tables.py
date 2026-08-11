@@ -101,26 +101,26 @@ STARTING_AREA_TABLE = RangeTable(10, [
 # ---------------------------------------------------------------------------
 
 PASSAGE_TABLE = RangeTable(20, [
-    (1, 1, {"text": "Passage continues d4x10 ft.", "next": "continue"}),
-    (2, 2, {"text": "Passage goes 15 ft and ends at a door.", "next": "door"}),
-    (3, 3, {"text": "Passage goes 30 ft and ends in stairs.", "next": "stairs"}),
-    (4, 4, {"text": "Passage turns left 90 degrees.", "next": "continue"}),
-    (5, 5, {"text": "Passage turns right 90 degrees.", "next": "continue"}),
-    (6, 6, {"text": "Passage dead ends. 40% chance of a secret door.", "next": "dead_end_secret"}),
-    (7, 7, {"text": "Passage continues 1d4x10 ft and comes to a four-way intersection.", "next": "branch_four_way"}),
-    (8, 8, {"text": "Passage continues d4x10 ft and comes to a T-junction.", "next": "branch_t"}),
-    (9, 9, {"text": "Passage continues d6x10 ft, then a side passage leads off to the left.", "next": "branch_side"}),
-    (10, 10, {"text": "Passage continues d6x10 ft, then a side passage leads off to the right.", "next": "branch_side"}),
-    (11, 11, {"text": "Passage ends in an open entrance to a room.", "next": "room"}),
-    (12, 12, {"text": "Door in the right wall.", "next": "door"}),
-    (13, 13, {"text": "Door in the left wall.", "next": "door"}),
-    (14, 14, {"text": "Secret door on a passage wall (Perception DC 15).", "next": "secret_door_check"}),
-    (15, 15, {"text": "Passage narrows (1d6/2) x10 ft (minimum width 5 ft).", "next": "continue"}),
-    (16, 16, {"text": "Passage widens (1d6/2) x10 ft (minimum width 10 ft).", "next": "continue"}),
-    (17, 17, {"text": "Opening to the left, leading to stairs.", "next": "stairs"}),
-    (18, 18, {"text": "Opening to the right, leading to stairs.", "next": "stairs"}),
-    (19, 19, {"text": "Opening in the floor, a straight drop down 1d10x10 ft.", "next": "shaft"}),
-    (20, 20, {"text": "Roll on the Random Architecture table.", "next": "architecture"}),
+    (1, 1, {"template": "Passage continues {n} ft.", "length_dice": "1d4", "next": "continue"}),
+    (2, 2, {"template": "Passage goes 15 ft and ends at a door.", "length_fixed": 15, "next": "door"}),
+    (3, 3, {"template": "Passage goes 30 ft and ends in stairs.", "length_fixed": 30, "next": "stairs"}),
+    (4, 4, {"template": "Passage turns left 90 degrees.", "turn": "left", "next": "continue"}),
+    (5, 5, {"template": "Passage turns right 90 degrees.", "turn": "right", "next": "continue"}),
+    (6, 6, {"template": "Passage dead ends. 40% chance of a secret door.", "next": "dead_end_secret"}),
+    (7, 7, {"template": "Passage continues {n} ft and comes to a four-way intersection.", "length_dice": "1d4", "next": "branch_four_way"}),
+    (8, 8, {"template": "Passage continues {n} ft and comes to a T-junction.", "length_dice": "1d4", "next": "branch_t"}),
+    (9, 9, {"template": "Passage continues {n} ft, then a side passage leads off to the left.", "length_dice": "1d6", "next": "branch_side_left"}),
+    (10, 10, {"template": "Passage continues {n} ft, then a side passage leads off to the right.", "length_dice": "1d6", "next": "branch_side_right"}),
+    (11, 11, {"template": "Passage ends in an open entrance to a room.", "next": "room"}),
+    (12, 12, {"template": "Door in the right wall.", "turn": "right", "next": "door"}),
+    (13, 13, {"template": "Door in the left wall.", "turn": "left", "next": "door"}),
+    (14, 14, {"template": "Secret door on a passage wall (Perception DC 15).", "next": "secret_door_check"}),
+    (15, 15, {"template": "Passage narrows to {n} ft wide.", "resize_dice": "1d6", "resize_min": 5, "next": "continue"}),
+    (16, 16, {"template": "Passage widens to {n} ft wide.", "resize_dice": "1d6", "resize_min": 10, "next": "continue"}),
+    (17, 17, {"template": "Opening to the left, leading to stairs.", "turn": "left", "next": "stairs"}),
+    (18, 18, {"template": "Opening to the right, leading to stairs.", "turn": "right", "next": "stairs"}),
+    (19, 19, {"template": "Opening in the floor, a straight drop down {n} ft.", "length_dice": "1d10", "next": "shaft"}),
+    (20, 20, {"template": "Roll on the Random Architecture table.", "next": "architecture"}),
 ])
 
 # ---------------------------------------------------------------------------
@@ -254,49 +254,49 @@ STAIRS_TABLE = RangeTable(20, [
 
 def _room_rect(dice: Dice) -> dict:
     w, l = dice.d4() * 10, dice.d4() * 10
-    return {"text": f"Rectangular room, {w}ft x {l}ft.", "dims": (w, l), "exits": dice.d6()}
+    return {"text": f"Rectangular room, {w}ft x {l}ft.", "dims": (w, l), "exits": dice.d6(), "shape": "rect"}
 
 
 def _room_square(dice: Dice, die: int) -> dict:
     side = (dice.roll(die) + 1) * 10
     exits_die = {4: 4, 6: 6, 8: 8}[die]
-    return {"text": f"Square room, {side}ft on each side.", "dims": (side, side), "exits": dice.roll(exits_die)}
+    return {"text": f"Square room, {side}ft on each side.", "dims": (side, side), "exits": dice.roll(exits_die), "shape": "square"}
 
 
 def _room_rect_ab(dice: Dice, die_a: int, off_a: int, die_b: int, off_b: int) -> dict:
     w = (dice.roll(die_a) + off_a) * 10
     l = (dice.roll(die_b) + off_b) * 10
-    return {"text": f"Rectangular room, {w}ft x {l}ft.", "dims": (w, l), "exits": dice.d6()}
+    return {"text": f"Rectangular room, {w}ft x {l}ft.", "dims": (w, l), "exits": dice.d6(), "shape": "rect"}
 
 
 def _room_circular(dice: Dice) -> dict:
     d = dice.d4() * 10
-    return {"text": f"Circular room, {d}ft diameter.", "dims": (d, d), "exits": dice.d4()}
+    return {"text": f"Circular room, {d}ft diameter.", "dims": (d, d), "exits": dice.d4(), "shape": "circle"}
 
 
 def _room_triangular(dice: Dice) -> dict:
     side = dice.d6() * 10
-    return {"text": f"Triangular room, {side}ft along one side (others fit the space).", "dims": (side, side), "exits": dice.d4()}
+    return {"text": f"Triangular room, {side}ft along one side (others fit the space).", "dims": (side, side), "exits": dice.d4(), "shape": "triangle"}
 
 
 def _room_polygon(dice: Dice, side_die: int, exit_die: int, exit_offset: int) -> dict:
     across = dice.roll(side_die) * 10
     exits = max(1, dice.roll(exit_die) + exit_offset)
-    return {"text": f"Polygonal room, {across}ft across.", "dims": (across, across), "exits": exits}
+    return {"text": f"Polygonal room, {across}ft across.", "dims": (across, across), "exits": exits, "shape": "polygon"}
 
 
 def _room_trapezoidal(dice: Dice) -> dict:
     side = dice.d6() * 10
     # Exit count wasn't legible on the source page for this entry; d4 is used
     # by analogy with the other irregular-polygon rooms above.
-    return {"text": f"Trapezoidal room, roughly {side}ft on each side.", "dims": (side, side), "exits": dice.d4()}
+    return {"text": f"Trapezoidal room, roughly {side}ft on each side.", "dims": (side, side), "exits": dice.d4(), "shape": "trapezoid"}
 
 
 def _room_cave(dice: Dice) -> dict:
     width = dice.d12() * 10
     # Exit count for the rough-cave entry was cropped out of the source scan;
     # d6 is used as a reasonable default in line with similarly sized rooms.
-    return {"text": f"Rough cave, roughly {width}ft across.", "dims": (width, width), "exits": dice.d6()}
+    return {"text": f"Rough cave, roughly {width}ft across.", "dims": (width, width), "exits": dice.d6(), "shape": "cave"}
 
 
 ROOM_TABLE_BUILDERS: dict[tuple[int, int], Callable[[Dice], dict]] = {

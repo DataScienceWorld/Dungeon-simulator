@@ -147,14 +147,37 @@ class DungeonGenerator:
 
     def resolve_passage(self, level: int) -> Node:
         node = Node(id=self._id(), kind="passage", level=level, lines=[])
+        events = node.geo.setdefault("events", [])
         segments = 0
         while True:
             value, entry = PASSAGE_TABLE.roll(self.dice)
             payload = entry.payload
-            node.lines.append(f"[Passage d20={value}] {payload['text']}")
+            tag = payload["next"]
+
+            length_ft = 0
+            width_ft = None
+            n_value = None
+            if payload.get("length_dice"):
+                length_ft = self.dice.expr(payload["length_dice"]) * 10
+                n_value = length_ft
+            elif payload.get("length_fixed") is not None:
+                length_ft = payload["length_fixed"]
+                n_value = length_ft
+            elif payload.get("resize_dice"):
+                width_ft = max(payload["resize_min"], (self.dice.roll(6) // 2) * 10)
+                n_value = width_ft
+
+            text = payload["template"].format(n=n_value) if "{n}" in payload["template"] else payload["template"]
+            node.lines.append(f"[Passage d20={value}] {text}")
             node.lines.extend(self._passage_contents_lines(level))
 
-            tag = payload["next"]
+            # 'shaft' length is a vertical drop, not a horizontal move.
+            if tag != "shaft" and length_ft:
+                events.append({"type": "move", "length_ft": length_ft})
+            if payload.get("turn"):
+                events.append({"type": "turn", "dir": payload["turn"]})
+            if width_ft is not None:
+                events.append({"type": "resize", "width_ft": width_ft})
 
             if tag == "continue":
                 segments += 1
@@ -166,21 +189,29 @@ class DungeonGenerator:
             if tag == "architecture":
                 arch_value, arch_entry = RANDOM_ARCHITECTURE_TABLE.roll(self.dice)
                 node.lines.append(f"[Architecture d20={arch_value}] {arch_entry.payload}")
-                if arch_value == 19:  # Portal - takes you to another part of the dungeon
+                if arch_value == 19:  # Portal - takes you to another, disconnected part of the dungeon
                     sub = self.dice.d4()
                     child = self.dispatch_beyond("passage" if sub <= 2 else "room", level)
                     node.children.append(child)
+                    events.append({"type": "child", "turn": None, "portal": True})
                     return node
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
                     return node
                 continue
 
-            if tag in ("branch_four_way", "branch_t", "branch_side"):
+            if tag in ("branch_four_way", "branch_t", "branch_side_left", "branch_side_right"):
+                if tag == "branch_side_left":
+                    branch_dir = "left"
+                elif tag == "branch_side_right":
+                    branch_dir = "right"
+                else:
+                    branch_dir = "left" if self.dice.chance(50) else "right"
                 if not self.budget_exhausted():
                     node.children.append(self.resolve_passage(level))
                 else:
                     node.children.append(self._edge_node(level))
+                events.append({"type": "child", "turn": branch_dir})
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
                     return node
@@ -192,6 +223,7 @@ class DungeonGenerator:
                     if found:
                         node.lines.append(f"A secret door is found here (Perception {roll} vs DC 15)!")
                         node.children.append(self.resolve_secret_door(level))
+                        events.append({"type": "child", "turn": None})
                     else:
                         node.lines.append(f"There's a secret door here, but it goes unnoticed (Perception {roll} vs DC 15).")
                 else:
@@ -203,6 +235,7 @@ class DungeonGenerator:
                 if found:
                     node.lines.append(f"Secret door found (Perception {roll} vs DC 15)!")
                     node.children.append(self.resolve_secret_door(level))
+                    events.append({"type": "child", "turn": None})
                     return node
                 node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed. The passage continues.")
                 segments += 1
@@ -211,16 +244,16 @@ class DungeonGenerator:
                 continue
 
             if tag == "shaft":
-                depth = self.dice.d10() * 10
-                node.lines.append(f"It's a {depth} ft drop.")
                 sub = self.dice.d4()
                 child = self.dispatch_beyond("passage" if sub <= 2 else "room", level + 1)
                 node.children.append(child)
+                events.append({"type": "child", "turn": None})
                 return node
 
             # terminal: door / stairs / room
             child = self.dispatch_beyond(tag, level)
             node.children.append(child)
+            events.append({"type": "child", "turn": None})
             return node
 
     def _passage_contents_lines(self, level: int) -> list[str]:
@@ -292,7 +325,7 @@ class DungeonGenerator:
             trapped = self.dice.d6() == 1
             lines.append(f"{material} door, {'locked' if locked else 'unlocked'}, {'trapped' if trapped else 'untrapped'}.")
 
-        node = Node(id=self._id(), kind="door", level=level, lines=lines)
+        node = Node(id=self._id(), kind="door", level=level, lines=lines, geo={"length_ft": 5})
         node.children.append(self.dispatch_beyond(payload["beyond"], level))
         return node
 
@@ -303,7 +336,8 @@ class DungeonGenerator:
         payload = entry.payload
         new_level = level + payload["level_delta"]
         node = Node(id=self._id(), kind="stairs", level=level,
-                    lines=[f"[Stairs d20={value}] {payload['text']}"])
+                    lines=[f"[Stairs d20={value}] {payload['text']}"],
+                    geo={"length_ft": 10, "level_delta": payload["level_delta"], "to_level": new_level})
         node.children.append(self.dispatch_beyond(payload["beyond"], new_level, payload.get("modifier", 0)))
         return node
 
@@ -312,21 +346,27 @@ class DungeonGenerator:
     def resolve_room(self, level: int, modifier: int = 0) -> Node:
         shape = roll_room_shape(self.dice)
         node = Node(id=self._id(), kind="room", level=level,
-                    lines=[f"[Room d20={shape['roll']}] {shape['text']}"])
+                    lines=[f"[Room d20={shape['roll']}] {shape['text']}"],
+                    geo={"width_ft": shape["dims"][0], "length_ft": shape["dims"][1], "shape": shape.get("shape", "rect")})
         self.rooms_created += 1
 
         size_bonus = self._room_size_bonus(shape["dims"])
         value, entry = ROOM_CONTENTS_TABLE.roll(self.dice, modifier + size_bonus)
         node.lines.append(f"[Room Contents d100={value}]")
         node.lines.extend(self._room_contents_lines(entry.payload, level))
+        node.geo["content_tag"] = entry.payload["tag"]
 
         extra_exits = max(0, shape["exits"] - 1)
+        exit_slots = []
         for _ in range(extra_exits):
+            slot = ("forward", "right", "left")[len(exit_slots) % 3]
+            exit_slots.append(slot)
             if self.budget_exhausted():
                 node.children.append(self._edge_node(level))
                 continue
             is_door = self.dice.chance(50)
             node.children.append(self.dispatch_beyond("door" if is_door else "passage", level))
+        node.geo["exit_slots"] = exit_slots
         return node
 
     @staticmethod

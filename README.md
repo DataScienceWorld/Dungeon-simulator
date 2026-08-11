@@ -18,8 +18,17 @@ finire in un vicolo cieco.
 ```bash
 python3 main.py --seed 42
 python3 main.py --seed 42 --format json -o dungeon.json
+python3 main.py --seed 42 --format html -o dungeon.html   # mappa 2D interattiva + registro
 python3 -m dungeon_simulator --help
 ```
+
+Il formato `html` apre una pagina con due viste: **Mappa** (una vera
+pianta 2D — stanze, corridoi, porte, scale, portali — con un tab per
+ogni livello del dungeon) e **Registro** (l'albero testuale espandibile
+di tutti i tiri). La mappa è ricostruita dalle stesse lunghezze,
+svolte e dimensioni già tirate dal generatore (vedi `layout.py`), non
+è una rappresentazione separata: passare col mouse su stanze/corridoi
+mostra i dettagli del tiro corrispondente.
 
 Opzioni principali:
 
@@ -39,9 +48,11 @@ dungeon_simulator/
   dice.py       # utilità per i tiri di dado (seedabili, espressioni "2d6+3")
   tables.py     # tutte le tabelle numeriche trascritte dal regolamento
   content.py    # generatori di tesori/indizi/PNG/trappole/pericoli
-  models.py     # Node/Dungeon: l'albero del dungeon generato
+  models.py     # Node/Dungeon: l'albero del dungeon generato (con dati "geo" per la mappa)
   generator.py  # DungeonGenerator: la logica di esplorazione/dispaccio
-  render.py     # rendering testuale e in dict (per il JSON)
+  layout.py     # turtle-graphics: dall'albero generato a coordinate 2D per livello
+  render_map.py # disegna la mappa SVG (stanze, corridoi, porte, scale...) dal layout
+  render.py     # rendering testuale, in dict (per il JSON) e HTML (mappa + registro)
   cli.py        # interfaccia a riga di comando
 tests/          # test con pytest
 ```

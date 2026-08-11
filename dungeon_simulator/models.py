@@ -14,6 +14,9 @@ class Node:
     level: int
     lines: list[str] = field(default_factory=list)
     children: list["Node"] = field(default_factory=list)
+    # Structured layout hints (lengths, turns, room footprint...) used to draw the 2D map.
+    # Populated alongside `lines` from the same dice rolls - see generator.py and layout.py.
+    geo: dict = field(default_factory=dict)
 
     def walk(self):
         yield self

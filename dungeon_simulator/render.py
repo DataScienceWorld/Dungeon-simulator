@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as _html
 
 from .models import Dungeon, Node
+from .render_map import render_map_section
 
 _KIND_LABELS = {
     "start": "ENTRANCE",
@@ -180,6 +181,20 @@ _HTML_STYLE = """
     outline-offset: 2px;
   }
 
+  .dg-view-tabs { display: flex; gap: .4rem; margin-bottom: .9rem; }
+  .dg-view-radio { position: absolute; opacity: 0; pointer-events: none; }
+  .dg-view-tabs label {
+    font-size: .85rem; font-weight: 700; padding: .4rem .9rem; border-radius: 7px;
+    background: var(--bg-panel); color: var(--text-dim); border: 1px solid var(--line); cursor: pointer;
+  }
+  #dg-view-map:checked ~ .dg-view-tabs label[for="dg-view-map"],
+  #dg-view-log:checked ~ .dg-view-tabs label[for="dg-view-log"] {
+    background: var(--brass); color: var(--brass-ink); border-color: var(--brass);
+  }
+  .dg-view-panel { display: none; }
+  #dg-view-map:checked ~ .dg-view-map-panel { display: block; }
+  #dg-view-log:checked ~ .dg-view-log-panel { display: block; }
+
   .dg-tree { border-left: 2px solid var(--line); padding-left: .9rem; }
   details.dg-node {
     margin: .3rem 0;
@@ -272,6 +287,7 @@ def render_html_body(dungeon: Dungeon) -> str:
     Suitable for embedding directly in a page body, e.g. via Artifact.
     """
     tree_html = _node_to_html(dungeon.root)
+    map_html = render_map_section(dungeon)
     return f"""{_HTML_STYLE}
 <div class="dg-app">
   <div class="dg-header">
@@ -283,11 +299,23 @@ def render_html_body(dungeon: Dungeon) -> str:
       <div><dt>Nodi esplorati</dt><dd>{dungeon.node_count}</dd></div>
     </dl>
   </div>
-  <div class="dg-toolbar">
-    <button id="dg-expand" type="button">Espandi tutto</button>
-    <button id="dg-collapse" type="button">Comprimi tutto</button>
+
+  <input type="radio" name="dg-view" id="dg-view-map" class="dg-view-radio" checked>
+  <input type="radio" name="dg-view" id="dg-view-log" class="dg-view-radio">
+  <div class="dg-view-tabs">
+    <label for="dg-view-map">Mappa</label>
+    <label for="dg-view-log">Registro</label>
   </div>
-  <div class="dg-tree">{tree_html}</div>
+
+  <div class="dg-view-panel dg-view-map-panel">{map_html}</div>
+
+  <div class="dg-view-panel dg-view-log-panel">
+    <div class="dg-toolbar">
+      <button id="dg-expand" type="button">Espandi tutto</button>
+      <button id="dg-collapse" type="button">Comprimi tutto</button>
+    </div>
+    <div class="dg-tree">{tree_html}</div>
+  </div>
 </div>
 {_HTML_SCRIPT}"""
 
