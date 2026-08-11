@@ -7,7 +7,7 @@ import json
 import sys
 
 from .generator import DEFAULT_LIMITLESS_ROOMS, DEFAULT_PARTY_LEVEL, DungeonGenerator
-from .render import render_text, to_dict
+from .render import render_html, render_text, to_dict
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,7 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Procedurally generate a solo dungeon crawl from the size/type/room/passage/door/stairs tables.",
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed, for a reproducible dungeon.")
-    parser.add_argument("--format", choices=["text", "json"], default="text", help="Output format.")
+    parser.add_argument("--format", choices=["text", "json", "html"], default="text",
+                         help="Output format. 'html' produces a browsable, collapsible tree view.")
     parser.add_argument("--verbose-empty", action="store_true",
                          help="Also print explicit 'empty' results for passage contents rolls.")
     parser.add_argument("--limitless-cap", type=int, default=DEFAULT_LIMITLESS_ROOMS,
@@ -41,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.format == "json":
         output = json.dumps(to_dict(dungeon), indent=2)
+    elif args.format == "html":
+        output = render_html(dungeon)
     else:
         output = render_text(dungeon)
 
