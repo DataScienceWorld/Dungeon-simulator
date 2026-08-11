@@ -83,6 +83,32 @@ def test_door_stubs_never_have_negative_length():
                     assert stub2 <= total / 2 + 1e-6
 
 
+def test_no_dead_end_or_edge_cap_lands_inside_a_room():
+    for seed in range(80):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for islands in layout.values():
+            for island in islands:
+                rects = [_room_rect(r) for r in island["rooms"]]
+                for cap in island["caps"]:
+                    for rx0, ry0, rx1, ry1 in rects:
+                        assert not (rx0 <= cap["x"] <= rx1 and ry0 <= cap["y"] <= ry1), (
+                            f"seed {seed}: a '{cap['kind']}' marker landed inside a room's floor"
+                        )
+
+
+def test_corridor_points_have_no_consecutive_duplicates():
+    for seed in range(80):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for islands in layout.values():
+            for island in islands:
+                for corridor in island["corridors"]:
+                    points = corridor["points"]
+                    for a, b in zip(points, points[1:]):
+                        assert a != b, f"seed {seed}: corridor {corridor['id']} has a zero-length segment"
+
+
 def test_root_island_is_flagged_as_entrance():
     dungeon = DungeonGenerator(seed=3).generate()
     layout = compute_layout(dungeon)

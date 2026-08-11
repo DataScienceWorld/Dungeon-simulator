@@ -211,7 +211,15 @@ class _Layout:
             self._enter(child, x, y, heading, level, island, force_new_island=False)
         if not had_child:
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
-        island["corridors"].append({"id": node.id, "points": points, "lines": node.lines})
+        # A "turn" records a point without moving (it just changes heading in
+        # place), so a passage that turns before its first move - or one cut
+        # short right after a turn - ends up with the same point twice in a
+        # row; RoughJS draws a zero-length segment like that as a stray blob.
+        deduped = [points[0]]
+        for point in points[1:]:
+            if point != deduped[-1]:
+                deduped.append(point)
+        island["corridors"].append({"id": node.id, "points": deduped, "lines": node.lines})
         return x, y
 
 
@@ -251,10 +259,32 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
     island["origin"] = (ox + shift_x, oy + shift_y)
 
 
+def _drop_caps_inside_rooms(island: dict) -> None:
+    """A dead-end/edge marker that lands inside a room's own floor is just
+    noise (the room already fully accounts for that spot) - it only ever
+    happens because caps don't otherwise avoid room interiors like rooms
+    avoid each other."""
+    if not island["caps"] or not island["rooms"]:
+        return
+    room_rects = []
+    for room in island["rooms"]:
+        xs = [c[0] for c in room["corners"]]
+        ys = [c[1] for c in room["corners"]]
+        room_rects.append((min(xs), min(ys), max(xs), max(ys)))
+    island["caps"] = [
+        cap for cap in island["caps"]
+        if not any(rx0 <= cap["x"] <= rx1 and ry0 <= cap["y"] <= ry1 for rx0, ry0, rx1, ry1 in room_rects)
+    ]
+
+
 def compute_layout(dungeon) -> dict[int, list[dict]]:
     """Return {level: [island, ...]} with islands translated so they never overlap."""
     layout = _Layout()
     layout.walk_root(dungeon.root)
+
+    for islands in layout.levels.values():
+        for island in islands:
+            _drop_caps_inside_rooms(island)
 
     result: dict[int, list[dict]] = {}
     for level, islands in sorted(layout.levels.items()):
