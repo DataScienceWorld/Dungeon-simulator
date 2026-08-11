@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import html as _html
 import json as _json
+import re as _re
 from pathlib import Path
 
+from . import dungeongen_bridge as _bridge
 from .layout import compute_layout
 
 PX = 20  # pixels per grid unit (1 unit = 10 ft)
@@ -100,6 +102,19 @@ _MAP_STYLE = """
     font: 600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     fill: var(--text-dim);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* dungeongen-backed maps: fixed paper background regardless of page theme,
+     so the overlay below also uses fixed (non-token) colors on purpose. */
+  .dg-map-svg-dungeongen { background: #ffffff; border-radius: 6px; }
+  .dg-map-hit { fill: #000; opacity: 0; cursor: help; pointer-events: all; }
+  .dg-map-room-number-dg {
+    font: 700 26px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    fill: #1a1a1a; text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 4px;
+  }
+  .dg-map-label-dg {
+    font: 600 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    fill: #333; font-variant-numeric: tabular-nums;
   }
 </style>
 """
@@ -254,6 +269,160 @@ def _full_text(lines: list[str]) -> str:
     return "\n".join(lines) if lines else ""
 
 
+# ---------------------------------------------------------------------------
+# dungeongen backend: photoreal-ish room/corridor/door art (see
+# dungeongen_bridge.py) with our own interactive overlay on top. Its paper is
+# always light, so the overlay uses fixed hex colors (matching this file's
+# light theme values) instead of the --token custom properties, which would
+# turn invisible-on-white in dark mode.
+# ---------------------------------------------------------------------------
+
+_DG_FIXED_HUES = {
+    "rust": "#a44f24", "teal": "#2f6b73", "plum": "#6b4fa0",
+    "violet": "#5a55a8", "slate": "#6b7280", "moss": "#3f7a4a",
+}
+_DG_INK = "#1a1a1a"
+_DG_BRASS = "#a9701f"
+
+_SVG_OUTER_RE = _re.compile(r"<svg\b[^>]*>", _re.IGNORECASE)
+_ID_ATTR_RE = _re.compile(r'\bid="([^"]+)"')
+_ID_REF_RE = _re.compile(r"url\(#([^)\"]+)\)")
+
+
+def _strip_svg_wrapper(svg_text: str) -> str:
+    """Return just the inner content of an <svg>...</svg> document."""
+    match = _SVG_OUTER_RE.search(svg_text)
+    start = match.end() if match else 0
+    end = svg_text.rfind("</svg>")
+    return svg_text[start:end] if end != -1 else svg_text[start:]
+
+
+def _namespace_svg_ids(svg_inner: str, suffix: str) -> str:
+    """dungeongen reuses short clip-path ids (e.g. "cl_10") across renders -
+    when more than one lands on the same page those ids collide and a later
+    clip-path silently wins over an earlier one. Suffix them uniquely."""
+    svg_inner = _ID_ATTR_RE.sub(lambda m: f'id="{m.group(1)}{suffix}"', svg_inner)
+    svg_inner = _ID_REF_RE.sub(lambda m: f"url(#{m.group(1)}{suffix})", svg_inner)
+    return svg_inner
+
+
+def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: float, scale: float) -> str:
+    """Interactive layer dungeongen has no concept of: room tooltips/numbers
+    (its own numbering is disabled so ours - matching the room key - is the
+    only one), a content-severity dot per room, and stairs/portals/dead-ends."""
+    parts = []
+
+    def px(x: float, y: float) -> tuple[float, float]:
+        return offset_x + x * scale, offset_y + y * scale
+
+    for room in island["rooms"]:
+        cxs = [c[0] for c in room["corners"]]
+        cys = [c[1] for c in room["corners"]]
+        rx, ry = px(min(cxs), min(cys))
+        rx2, ry2 = px(max(cxs), max(cys))
+        shape_name = _SHAPE_NAMES.get(room["shape"], room["shape"])
+        title = _html.escape(f"Stanza {shape_name} #{room['id']}\n{_full_text(room['lines'])}")
+        cx_ = (rx + rx2) / 2
+        hue = _DG_FIXED_HUES.get(_room_hue(room))
+        parts.append(
+            f'<rect x="{rx}" y="{ry}" width="{rx2 - rx}" height="{ry2 - ry}" '
+            f'class="dg-map-hit"><title>{title}</title></rect>'
+            f'<text x="{cx_}" y="{ry + 32}" class="dg-map-room-number-dg">{room["id"]}</text>'
+        )
+        if hue:
+            parts.append(f'<circle cx="{rx + 16}" cy="{ry + 16}" r="9" fill="{hue}" stroke="#fff" stroke-width="2" />')
+
+    for stair in island["stairs"]:
+        sx, sy = px(stair["x"], stair["y"])
+        up = stair["delta"] < 0
+        pts = (f"{sx},{sy - 16} {sx - 13},{sy + 12} {sx + 13},{sy + 12}" if up
+               else f"{sx},{sy + 16} {sx - 13},{sy - 12} {sx + 13},{sy - 12}")
+        title = _html.escape(_full_text(stair["lines"]))
+        parts.append(
+            f'<polygon points="{pts}" fill="{_DG_FIXED_HUES["plum"]}" stroke="#fff" stroke-width="2">'
+            f"<title>{title}</title></polygon>"
+            f'<text x="{sx + 19}" y="{sy + 6}" class="dg-map-label-dg">L{stair.get("to_level")}</text>'
+        )
+
+    for portal in island["portals"]:
+        px_, py_ = px(portal["x"], portal["y"])
+        parts.append(
+            f'<circle cx="{px_}" cy="{py_}" r="16" fill="none" stroke="{_DG_FIXED_HUES["violet"]}" '
+            f'stroke-width="3" stroke-dasharray="6 6"><title>Portale - prosegue altrove sulla mappa</title></circle>'
+        )
+
+    for cap in island["caps"]:
+        cx_, cy_ = px(cap["x"], cap["y"])
+        label = "Limite del dungeon" if cap["kind"] == "edge" else "Vicolo cieco"
+        parts.append(f'<circle cx="{cx_}" cy="{cy_}" r="8" fill="{_DG_FIXED_HUES["slate"]}"><title>{label}</title></circle>')
+
+    ox, oy = island["origin"]
+    ox_, oy_ = px(ox, oy)
+    label = "Ingresso del dungeon" if island.get("is_entrance") else "Punto di arrivo su questa mappa"
+    if island.get("is_entrance"):
+        parts.append(f'<circle cx="{ox_}" cy="{oy_}" r="13" fill="{_DG_BRASS}" stroke="#fff" stroke-width="3"><title>{label}</title></circle>')
+    else:
+        parts.append(
+            f'<circle cx="{ox_}" cy="{oy_}" r="13" fill="none" stroke="{_DG_BRASS}" stroke-width="3" '
+            f'stroke-dasharray="4 4"><title>{label}</title></circle>'
+        )
+    return "".join(parts)
+
+
+def _dungeongen_level_svg(islands: list[dict]) -> dict | None:
+    """Try to render an entire level's islands via dungeongen, composed side
+    by side at dungeongen's own native scale, with our overlay (tooltips,
+    room numbers, stairs/portals/dead-ends dungeongen has no concept of) on
+    top. Returns None if dungeongen is unavailable, any island is too big
+    for it, or anything about the render fails - the caller falls back to
+    the RoughJS renderer in that case."""
+    if not _bridge.available() or not islands:
+        return None
+    if any(not island["rooms"] for island in islands):
+        # An island with no rooms at all (just a dead end, or a stub reached
+        # via a stairs/portal jump that went nowhere) has nothing for
+        # dungeongen to draw - its Dungeon.bounds falls back to a meaningless
+        # placeholder box, unrelated to where our own overlay markers really
+        # are. Simpler and safer to render the whole level with RoughJS.
+        return None
+    if not all(_bridge.fits_size_limit(island) for island in islands):
+        return None
+
+    placed = []
+    try:
+        for idx, island in enumerate(islands):
+            svg, off_x, off_y, scale, width, height = _bridge.render_island_svg(island)
+            inner = _namespace_svg_ids(_strip_svg_wrapper(svg), f"__i{idx}")
+            placed.append((inner, -off_x, -off_y, width, height, off_x, off_y, scale))
+    except Exception:
+        return None
+
+    min_x = min(p[1] for p in placed)
+    min_y = min(p[2] for p in placed)
+    max_x = max(p[1] + p[3] for p in placed)
+    max_y = max(p[2] + p[4] for p in placed)
+    shift_x, shift_y = -min_x, -min_y
+    canvas_w, canvas_h = max_x - min_x, max_y - min_y
+
+    backgrounds, overlays = [], []
+    for (inner, place_x, place_y, _w, _h, off_x, off_y, scale), island in zip(placed, islands):
+        gx, gy = place_x + shift_x, place_y + shift_y
+        backgrounds.append(f'<g transform="translate({gx},{gy})">{inner}</g>')
+        # The background for this island sits at (gx, gy) and its own content
+        # at local coordinate (off_x + our_x*scale) - composing those two
+        # gives shared_px = gx + off_x + our_x*scale = shift_x + our_x*scale
+        # (place_x is -off_x by construction), so the overlay - which wants
+        # shared_px directly - only ever needs the shared shift, not off_x.
+        overlays.append(_dungeongen_overlay_for_island(island, shift_x, shift_y, scale))
+
+    body = "".join(backgrounds) + "".join(overlays)
+    svg = (
+        f'<svg class="dg-map-svg dg-map-svg-dungeongen" width="{canvas_w}" height="{canvas_h}" '
+        f'viewBox="0 0 {canvas_w} {canvas_h}" xmlns="http://www.w3.org/2000/svg">{body}</svg>'
+    )
+    return {"svg": svg}
+
+
 def _bbox_of_islands(islands: list[dict]):
     xs, ys = [], []
     for island in islands:
@@ -399,15 +568,28 @@ def _safe_json(data) -> str:
 
 
 def render_map_section(dungeon) -> str:
-    """A self-contained map section: level tabs (if needed), one hand-drawn SVG
-    + numbered key per level, and a legend. RoughJS runs once, client-side,
-    against a JSON payload built from the already-computed layout."""
+    """A self-contained map section: level tabs (if needed), one map + numbered
+    key per level, and a legend. Each level tries the dungeongen backend first
+    (proper wall/door art - see dungeongen_bridge.py) and falls back to the
+    hand-drawn RoughJS renderer (client-side, against a JSON payload) when
+    dungeongen is unavailable, the level is too large for it, or its render
+    fails for any reason."""
     layout = compute_layout(dungeon)
     levels = sorted(layout.keys())
     if not levels:
         return ""
 
-    payloads = [_level_payload(level, layout[level]) for level in levels]
+    svg_by_level: dict[int, str] = {}
+    fallback_payloads = []
+    for level in levels:
+        islands = layout[level]
+        dg_result = _dungeongen_level_svg(islands)
+        if dg_result is not None:
+            svg_by_level[level] = dg_result["svg"]
+        else:
+            payload = _level_payload(level, islands)
+            svg_by_level[level] = _svg_shell(payload)
+            fallback_payloads.append(payload)
 
     radios_html = ""
     labels_html = ""
@@ -418,10 +600,10 @@ def render_map_section(dungeon) -> str:
             checked = " checked" if i == 0 else ""
             radios_html += f'<input type="radio" name="dg-map-level" id="{tab_id}" class="dg-map-radio"{checked}>'
             labels_html += f'<label for="{tab_id}">Livello {level}</label>'
-        for level, payload in zip(levels, payloads):
+        for level in levels:
             panels_html += (
                 f'<div class="dg-map-panel" data-for="{_tab_id(level)}">'
-                f'<div class="dg-map-scroll">{_svg_shell(payload)}</div>'
+                f'<div class="dg-map-scroll">{svg_by_level[level]}</div>'
                 f"{_room_key_html(layout[level])}</div>"
             )
         panel_css = "".join(
@@ -436,7 +618,7 @@ def render_map_section(dungeon) -> str:
     else:
         panels_html = (
             f'<div class="dg-map-panel" data-for="only">'
-            f'<div class="dg-map-scroll">{_svg_shell(payloads[0])}</div>'
+            f'<div class="dg-map-scroll">{svg_by_level[levels[0]]}</div>'
             f"{_room_key_html(layout[levels[0]])}</div>"
         )
         panel_css = ""
@@ -460,13 +642,16 @@ def render_map_section(dungeon) -> str:
     )
 
     tabs_wrap = f'<div class="dg-map-tabs">{labels_html}</div>' if labels_html else ""
-    data_script = f'<script id="dg-map-data" type="application/json">{_safe_json(payloads)}</script>'
+    # RoughJS only ships when at least one level actually needs the fallback
+    # renderer - a dungeongen-only page has no use for it.
+    scripts = ""
+    if fallback_payloads:
+        data_script = f'<script id="dg-map-data" type="application/json">{_safe_json(fallback_payloads)}</script>'
+        scripts = f"{data_script}<script>{_VENDOR_JS}</script><script>{_RENDER_SCRIPT_JS}</script>"
     return (
         f"{_MAP_STYLE}<style>{panel_css}{show_first}</style>\n"
         f'<div class="dg-map-wrap">{radios_html}{tabs_wrap}'
         f'<div class="dg-map-panels">{panels_html}</div>'
         f"{legend}</div>"
-        f"{data_script}"
-        f"<script>{_VENDOR_JS}</script>"
-        f"<script>{_RENDER_SCRIPT_JS}</script>"
+        f"{scripts}"
     )

@@ -1,0 +1,9 @@
+# Optional: enables dungeongen-backed map background rendering in the HTML
+# output (dungeon_simulator/dungeongen_bridge.py). Not required for the
+# generator, CLI, or text/json output, and the HTML map still works without
+# it (falls back to the built-in RoughJS renderer).
+#
+# dungeongen pulls in skia-python (native), which needs the system graphics
+# libraries libegl1 and libgl1 (Debian/Ubuntu: apt-get install -y libegl1
+# libgl1).
+dungeongen

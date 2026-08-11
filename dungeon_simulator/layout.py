@@ -18,6 +18,12 @@ so favoring readability over pixel-exact corridor lengths is intentional.
 A level can also have more than one disconnected "island" (e.g. two
 different staircases both landing on level 2, or a magical portal jump) -
 these are laid out side by side rather than overlapping.
+
+Alongside the drawable shapes, each island also collects `links`: every
+direct room-to-room connection (the doors/corridor in between), used to
+feed the dungeongen rendering bridge (see dungeongen_bridge.py). A link is
+only recorded when a chain of doors/passages actually starts and ends at a
+room - dead ends, map edges, stairs and portals never resolve into one.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ def _rotate(heading: str, direction: str | None) -> str:
 def _new_island() -> dict:
     return {
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
-        "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
+        "links": [], "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
     }
 
 
@@ -67,6 +73,20 @@ def _overlaps(a, b, margin: float) -> bool:
                 or a[3] + margin <= b[1] or b[3] + margin <= a[1])
 
 
+class _Path:
+    """Accumulates waypoints/doors between the last room and whatever comes next.
+
+    Discarded (never turned into a link) if the chain doesn't end at a room."""
+
+    def __init__(self, room_from, start_point):
+        self.room_from = room_from
+        self.points = [start_point]
+        self.doors = []
+
+    def branch(self, start_point):
+        return _Path(self.room_from, start_point)
+
+
 class _Layout:
     def __init__(self):
         self.levels: dict[int, list[dict]] = {}
@@ -79,9 +99,10 @@ class _Layout:
     def walk_root(self, node) -> None:
         island = self._add_island(node.level)
         island["is_entrance"] = True
-        self._walk(node, 0.0, 0.0, "N", node.level, island)
+        self._walk(node, 0.0, 0.0, "N", node.level, island, _Path(None, (0.0, 0.0)))
 
-    def _enter(self, child, x: float, y: float, heading: str, level: int, island: dict, force_new_island: bool):
+    def _enter(self, child, x: float, y: float, heading: str, level: int, island: dict,
+               force_new_island: bool, path: "_Path"):
         """Walk into `child`. Returns the (x, y) actually used for its entry point -
         which may be further along `heading` than requested if a room had to be
         pushed clear of something already on the map. Crossing into a new island
@@ -89,28 +110,30 @@ class _Layout:
         coordinates, so the original (x, y) is echoed back unchanged."""
         if force_new_island or child.level != level:
             new_island = self._add_island(child.level)
-            self._walk(child, 0.0, 0.0, "N", child.level, new_island)
+            self._walk(child, 0.0, 0.0, "N", child.level, new_island, _Path(None, (0.0, 0.0)))
             return x, y
-        return self._walk(child, x, y, heading, level, island)
+        return self._walk(child, x, y, heading, level, island, path)
 
-    def _walk(self, node, x: float, y: float, heading: str, level: int, island: dict):
+    def _walk(self, node, x: float, y: float, heading: str, level: int, island: dict, path: "_Path"):
         kind = node.kind
         if kind == "start":
             for child in node.children:
-                self._enter(child, x, y, heading, level, island, force_new_island=False)
+                self._enter(child, x, y, heading, level, island, False, path)
             return x, y
         if kind == "room":
-            return self._walk_room(node, x, y, heading, level, island)
+            return self._walk_room(node, x, y, heading, level, island, path)
         if kind == "passage":
-            return self._walk_passage(node, x, y, heading, level, island)
+            return self._walk_passage(node, x, y, heading, level, island, path)
         if kind == "door":
             length = node.geo.get("length_ft", 5) / FT_PER_UNIT
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
             door = {"id": node.id, "x1": x, "y1": y, "x2": nx, "y2": ny, "lines": node.lines}
             island["doors"].append(door)
+            path.points.append((nx, ny))
+            path.doors.append(door)
             for child in node.children:
-                ax, ay = self._enter(child, nx, ny, heading, level, island, force_new_island=False)
+                ax, ay = self._enter(child, nx, ny, heading, level, island, False, path)
                 door["x2"], door["y2"] = ax, ay
             return x, y
         if kind == "stairs":
@@ -123,14 +146,14 @@ class _Layout:
                 "lines": node.lines,
             })
             for child in node.children:
-                self._enter(child, nx, ny, heading, level, island, force_new_island=True)
+                self._enter(child, nx, ny, heading, level, island, True, path)
             return x, y
         if kind in ("edge", "dead_end"):
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": kind, "lines": node.lines})
             return x, y
         return x, y
 
-    def _walk_room(self, node, x, y, heading, level, island):
+    def _walk_room(self, node, x, y, heading, level, island, path):
         w = node.geo.get("width_ft", 20) / FT_PER_UNIT
         depth = node.geo.get("length_ft", 20) / FT_PER_UNIT
         dx, dy = _VECTORS[heading]
@@ -159,6 +182,14 @@ class _Layout:
             "id": node.id, "corners": corners, "shape": node.geo.get("shape", "rect"),
             "content_tag": node.geo.get("content_tag"), "lines": node.lines,
         })
+
+        if path.room_from is not None:
+            path.points.append((x, y))
+            island["links"].append({
+                "from_room": path.room_from, "to_room": node.id,
+                "points": list(path.points), "doors": list(path.doors),
+            })
+
         slots = node.geo.get("exit_slots", [])
         for child, slot in zip(node.children, slots):
             if slot == "forward":
@@ -169,10 +200,10 @@ class _Layout:
             else:  # left
                 eh = _rotate(heading, "left")
                 ex, ey = x + dx * depth / 2 - px * w / 2, y + dy * depth / 2 - py * w / 2
-            self._enter(child, ex, ey, eh, level, island, force_new_island=False)
+            self._enter(child, ex, ey, eh, level, island, False, _Path(node.id, (ex, ey)))
         return x, y
 
-    def _walk_passage(self, node, x, y, heading, level, island):
+    def _walk_passage(self, node, x, y, heading, level, island, path):
         points = [(x, y)]
         children = iter(node.children)
         had_child = False
@@ -183,9 +214,11 @@ class _Layout:
                 dx, dy = _VECTORS[heading]
                 x, y = x + dx * length, y + dy * length
                 points.append((x, y))
+                path.points.append((x, y))
             elif etype == "turn":
                 heading = _rotate(heading, event["dir"])
                 points.append((x, y))
+                path.points.append((x, y))
             elif etype == "resize":
                 continue
             elif etype == "child":
@@ -195,7 +228,9 @@ class _Layout:
                 had_child = True
                 turn = event.get("turn")
                 child_heading = _rotate(heading, turn)
-                ax, ay = self._enter(child, x, y, child_heading, level, island, force_new_island=bool(event.get("portal")))
+                child_path = path.branch((x, y)) if turn is not None else path
+                ax, ay = self._enter(child, x, y, child_heading, level, island,
+                                      bool(event.get("portal")), child_path)
                 if event.get("portal"):
                     island["portals"].append({"id": node.id, "x": x, "y": y, "lines": node.lines})
                 elif turn is None and (ax, ay) != (x, y):
@@ -208,7 +243,7 @@ class _Layout:
                     x, y = ax, ay
         for child in children:  # any child without a matching event (shouldn't normally happen)
             had_child = True
-            self._enter(child, x, y, heading, level, island, force_new_island=False)
+            self._enter(child, x, y, heading, level, island, False, path)
         if not had_child:
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
         # A "turn" records a point without moving (it just changes heading in
@@ -255,6 +290,8 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
         for item in island[group]:
             item["x"] += shift_x
             item["y"] += shift_y
+    for link in island["links"]:
+        link["points"] = [(cx + shift_x, cy + shift_y) for cx, cy in link["points"]]
     ox, oy = island["origin"]
     island["origin"] = (ox + shift_x, oy + shift_y)
 
