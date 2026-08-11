@@ -50,6 +50,10 @@ _SHAPE_MAP = {
     "triangle": "RECT", "polygon": "OCTAGON", "trapezoid": "RECT", "cave": "RECT",
 }
 
+# Visual-only floor for dungeongen's background render - see the comment where
+# it's applied in build_dungeongen_dungeon().
+_MIN_ROOM_GRID_UNITS = 2
+
 
 def available() -> bool:
     return _IMPORT_ERROR is None
@@ -91,6 +95,16 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         ys = [c[1] for c in room["corners"]]
         x0, y0, x1, y1 = _grid(min(xs)), _grid(min(ys)), _grid(max(xs)), _grid(max(ys))
         width, height = max(1, x1 - x0), max(1, y1 - y0)
+        if width < _MIN_ROOM_GRID_UNITS or height < _MIN_ROOM_GRID_UNITS:
+            # Some legitimate rolls (e.g. the Room Table's smallest circular
+            # room, 10ft diameter) are exactly as wide as a standard corridor.
+            # Drawn at their real size they're an unreadable pinch/bulge in
+            # the corridor rather than a recognizable room. This only inflates
+            # dungeongen's background art - the room's real recorded
+            # dimensions, log text, and layout math are untouched.
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            width, height = max(width, _MIN_ROOM_GRID_UNITS), max(height, _MIN_ROOM_GRID_UNITS)
+            x0, y0 = round(cx - width / 2), round(cy - height / 2)
         dg_id = f"r{room['id']}"
         shape_name = _SHAPE_MAP.get(room["shape"], "RECT")
         dungeon.add_room(_DGRoom(
