@@ -32,7 +32,10 @@ FT_PER_UNIT = 10.0
 ROOM_MARGIN = 0.6  # minimum clear gap kept between two rooms' footprints, in grid units
 _PUSH_STEP = 0.5
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
-_MAX_PUSH_ATTEMPTS = 80
+_MAX_PUSH_ATTEMPTS = 160  # max push reach of _PUSH_STEP*_MAX_PUSH_ATTEMPTS = 80 grid units;
+# denser islands (more evenly-explored branches competing for the same
+# space) need more room to find genuinely clear ground - 80 attempts (40
+# units) was observed to still leave rooms overlapping on some seeds.
 
 _HEADINGS = ["N", "E", "S", "W"]
 _VECTORS = {"N": (0.0, -1.0), "E": (1.0, 0.0), "S": (0.0, 1.0), "W": (-1.0, 0.0)}

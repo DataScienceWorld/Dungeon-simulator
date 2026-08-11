@@ -28,6 +28,22 @@ _KIND_META = {
     "dead_end": ("Vicolo cieco", "slate"),
 }
 
+_TURN_LABELS = {"left": "svolta a sinistra", "right": "svolta a destra", None: "si continua dritto"}
+_SLOT_LABELS = {"forward": "uscita frontale", "right": "uscita a destra", "left": "uscita a sinistra"}
+
+
+def _child_exit_labels(node: Node) -> list[str | None]:
+    """One label per entry in node.children, describing which exit/turn led
+    there - a room's own exit_slots for a room, or a passage's "child"
+    events (in the same order children were appended) for a passage. Both
+    kinds guarantee count and order match 1:1 with node.children."""
+    if node.kind == "room":
+        return [_SLOT_LABELS.get(slot, slot) for slot in node.geo.get("exit_slots", [])]
+    if node.kind == "passage":
+        turns = [event.get("turn") for event in node.geo.get("events", []) if event.get("type") == "child"]
+        return [_TURN_LABELS.get(turn, turn) for turn in turns]
+    return [None] * len(node.children)
+
 
 def render_text(dungeon: Dungeon) -> str:
     out = []
@@ -50,7 +66,11 @@ def _render_node(node: Node, depth: int, out: list[str]) -> None:
     out.append(f"{indent}- [{label}] (level {node.level}, #{node.id})")
     for line in node.lines:
         out.append(f"{indent}    {line}")
-    for child in node.children:
+    exit_labels = _child_exit_labels(node)
+    for i, child in enumerate(node.children):
+        exit_label = exit_labels[i] if i < len(exit_labels) else None
+        if exit_label:
+            out.append(f"{indent}  >> {exit_label}")
         _render_node(child, depth + 1, out)
 
 
@@ -237,6 +257,7 @@ _HTML_STYLE = """
   .dg-badge.k-slate  { background: var(--slate);  color: var(--slate-ink); }
 
   .dg-idlevel { color: var(--text-dim); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .dg-exit { color: var(--brass); font-size: .78rem; font-weight: 600; font-style: italic; }
 
   ul.dg-lines {
     margin: .3rem 0 .3rem 1.5rem;
@@ -267,12 +288,18 @@ _HTML_SCRIPT = """
 """
 
 
-def _node_to_html(node: Node, depth: int = 0) -> str:
+def _node_to_html(node: Node, depth: int = 0, exit_label: str | None = None) -> str:
     label, hue = _KIND_META.get(node.kind, (node.kind.title(), "slate"))
     lines_html = "".join(f"<li>{_html.escape(line)}</li>" for line in node.lines)
-    children_html = "".join(_node_to_html(child, depth + 1) for child in node.children)
+    exit_labels = _child_exit_labels(node)
+    children_html = "".join(
+        _node_to_html(child, depth + 1, exit_labels[i] if i < len(exit_labels) else None)
+        for i, child in enumerate(node.children)
+    )
     open_attr = " open" if depth <= 1 else ""
+    exit_html = f'<span class="dg-exit">&raquo; {_html.escape(exit_label)}</span>' if exit_label else ""
     summary = (
+        f"{exit_html}"
         f'<span class="dg-badge k-{hue}">{_html.escape(label)}</span>'
         f'<span class="dg-idlevel">livello {node.level} &middot; #{node.id}</span>'
     )

@@ -23,7 +23,7 @@ def _first_populated_level(dungeon, min_rooms=2, max_units=None):
 
 
 def test_fits_size_limit_agrees_with_extent():
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     layout = compute_layout(dungeon)
     for islands in layout.values():
         for island in islands:
@@ -31,9 +31,9 @@ def test_fits_size_limit_agrees_with_extent():
 
 
 def test_build_dungeongen_dungeon_matches_room_and_link_counts():
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     _, islands = _first_populated_level(dungeon)
-    assert islands is not None, "expected at least one populated level for seed 72"
+    assert islands is not None, "expected at least one populated level for seed 1"
     island = islands[0]
     dg = bridge.build_dungeongen_dungeon(island)
     assert len(dg.rooms) == len(island["rooms"])
@@ -47,7 +47,7 @@ def test_build_dungeongen_dungeon_matches_room_and_link_counts():
 
 
 def test_render_island_svg_offset_places_a_room_correctly():
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     _, islands = _first_populated_level(dungeon, max_units=bridge._MAX_MAP_UNITS)
     assert islands is not None
     island = islands[0]
@@ -65,7 +65,7 @@ def test_render_island_svg_offset_places_a_room_correctly():
 
 
 def test_dungeongen_level_svg_returns_none_for_oversized_island():
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     layout = compute_layout(dungeon)
     for islands in layout.values():
         for island in islands:
@@ -78,7 +78,7 @@ def test_dungeongen_level_svg_returns_none_for_oversized_island():
             oversized["rooms"] = [far_room, *island["rooms"][1:]]
             assert _dungeongen_level_svg([oversized]) is None
             return
-    pytest.skip("no island with rooms found for seed 72")
+    pytest.skip("no island with rooms found for seed 1")
 
 
 def test_dungeongen_level_svg_returns_none_when_any_island_has_no_rooms():
@@ -91,16 +91,16 @@ def test_dungeongen_level_svg_returns_none_when_any_island_has_no_rooms():
 
 
 def test_render_map_section_uses_dungeongen_when_it_fits():
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     html = render_map_section(dungeon)
     assert 'class="dg-map-svg dg-map-svg-dungeongen"' in html, (
-        "expected at least one level to render through dungeongen for seed 72"
+        "expected at least one level to render through dungeongen for seed 1"
     )
 
 
 def test_render_map_section_falls_back_when_dungeongen_forced_unavailable(monkeypatch):
     monkeypatch.setattr(bridge, "_IMPORT_ERROR", RuntimeError("forced unavailable for this test"))
-    dungeon = DungeonGenerator(seed=72).generate()
+    dungeon = DungeonGenerator(seed=1).generate()
     html = render_map_section(dungeon)
     assert 'class="dg-map-svg dg-map-svg-dungeongen"' not in html
     assert "<svg" in html
