@@ -73,6 +73,52 @@ def _overlaps(a, b, margin: float) -> bool:
                 or a[3] + margin <= b[1] or b[3] + margin <= a[1])
 
 
+def _segment_crosses_room(p0, p1, bbox, pad: float = 0.05) -> bool:
+    """True if the axis-aligned segment p0->p1 passes through the *interior*
+    of bbox (touching its edge doesn't count - that's how every corridor
+    meets the room it's actually going to)."""
+    x0, y0 = p0
+    x1, y1 = p1
+    bx0, by0, bx1, by1 = bbox
+    if abs(x0 - x1) < 1e-9:
+        if not (bx0 + pad < x0 < bx1 - pad):
+            return False
+        lo, hi = min(y0, y1), max(y0, y1)
+        return lo < by1 - pad and hi > by0 + pad
+    if abs(y0 - y1) < 1e-9:
+        if not (by0 + pad < y0 < by1 - pad):
+            return False
+        lo, hi = min(x0, x1), max(x0, x1)
+        return lo < bx1 - pad and hi > bx0 + pad
+    return False
+
+
+def _detour_around(prev, entry, blockers, margin: float = 1.0):
+    """A room can end up pushed clear of every *other room* yet still have
+    its straight connecting corridor cut through some third room that
+    happened to sit between the door and its new position (the push-back in
+    _walk_room only checks the room's own footprint, not the path leading to
+    it). Route around the union of whatever it crosses instead: a single
+    sideways jog wide enough to clear them, added to the trunk `path.points`
+    so it renders as a corridor bend rather than a line straight through
+    someone else's walls."""
+    x0, y0 = prev
+    x1, y1 = entry
+    if abs(x0 - x1) < 1e-9 and abs(y0 - y1) > 1e-9:
+        bx0 = min(b[0] for b in blockers)
+        bx1 = max(b[2] for b in blockers)
+        left, right = bx0 - margin, bx1 + margin
+        jog_x = left if abs(x0 - left) <= abs(x0 - right) else right
+        return [(jog_x, y0), (jog_x, y1)]
+    if abs(y0 - y1) < 1e-9 and abs(x0 - x1) > 1e-9:
+        by0 = min(b[1] for b in blockers)
+        by1 = max(b[3] for b in blockers)
+        top, bottom = by0 - margin, by1 + margin
+        jog_y = top if abs(y0 - top) <= abs(y0 - bottom) else bottom
+        return [(x0, jog_y), (x1, jog_y)]
+    return []
+
+
 class _Path:
     """Accumulates waypoints/doors between the last room and whatever comes next.
 
@@ -169,6 +215,13 @@ class _Layout:
         else:
             candidate = _room_aabb(x + dx * pushed, y + dy * pushed, dx, dy, px, py, w, depth)
         x, y = x + dx * pushed, y + dy * pushed
+
+        if path.room_from is not None and path.points:
+            prev = path.points[-1]
+            blockers = [other for other in occupied if _segment_crosses_room(prev, (x, y), other)]
+            if blockers:
+                path.points.extend(_detour_around(prev, (x, y), blockers))
+
         occupied.append(candidate)
 
         far_x, far_y = x + dx * depth, y + dy * depth
