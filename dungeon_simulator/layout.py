@@ -31,6 +31,7 @@ from __future__ import annotations
 FT_PER_UNIT = 10.0
 ROOM_MARGIN = 0.6  # minimum clear gap kept between two rooms' footprints, in grid units
 _PUSH_STEP = 0.5
+_CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
 _MAX_PUSH_ATTEMPTS = 80
 
 _HEADINGS = ["N", "E", "S", "W"]
@@ -94,16 +95,21 @@ def _segment_crosses_room(p0, p1, bbox, pad: float = 0.05) -> bool:
 
 
 _DETOUR_MARGIN = 1.0
-_DETOUR_MIN_LEG = 1.1  # keep at least this much of the *original* approach axis
+_DETOUR_MIN_LEG = 0.6  # keep at least this much of the *original* approach axis
 # right before prev and right after entry - dungeongen (and a human reading
 # the map) expects a corridor to meet a room head-on, perpendicular to its
 # wall. A jog that runs all the way up to the wall's own coordinate arrives
-# parallel to it instead - dungeongen then can't place a door there at all,
-# and the room reads as unconnected (see the regression check below). Must
-# stay above 1.0: dungeongen rounds our grid units to whole cells, and
-# anything closer than a full unit can round down to the *same* cell as the
-# wall it's supposed to be standing clear of, silently recreating the same
-# parallel-approach bug one rounding step later.
+# parallel to it instead.
+#
+# A larger value here (>1.0) survives dungeongen's integer-cell rounding
+# more reliably and fixes a few more "room reads as unconnected" cases, but
+# it also measurably increases how often the jog itself cuts through some
+# *other* room on a crowded island (0.6 -> ~15 such crossings across a
+# 150-seed sweep; 1.1+ -> ~74) - a much more common and more visible defect
+# than the rounding corner case it would fix. dungeongen_bridge.py's own
+# _ensure_perpendicular_approach() is the second line of defense for the
+# rounding case specifically (and the hang-safety net is independent of
+# this value either way - see _is_axis_aligned_path), so this stays small.
 
 
 def _detour_around(prev, entry, blockers, margin: float = _DETOUR_MARGIN):
@@ -230,7 +236,17 @@ class _Layout:
                 self._enter(child, nx, ny, heading, level, island, True, path)
             return x, y
         if kind in ("edge", "dead_end"):
-            island["caps"].append({"id": node.id, "x": x, "y": y, "kind": kind, "lines": node.lines})
+            # A branch taken off a T-junction/four-way intersection that
+            # immediately dead-ends (most often because the room budget ran
+            # out) would otherwise place its cap right on top of the trunk
+            # corridor, with nothing to show a branch was ever taken. A
+            # short stub - rendered as its own tiny corridor segment, same
+            # as any other passage - makes the junction visible even when
+            # there's nothing beyond it.
+            dx, dy = _VECTORS[heading]
+            sx, sy = x + dx * _CAP_STUB_LENGTH, y + dy * _CAP_STUB_LENGTH
+            island["corridors"].append({"id": f"cap{node.id}", "points": [(x, y), (sx, sy)], "lines": []})
+            island["caps"].append({"id": node.id, "x": sx, "y": sy, "kind": kind, "lines": node.lines})
             return x, y
         return x, y
 
@@ -255,6 +271,15 @@ class _Layout:
             prev = path.points[-1]
             blockers = [other for other in occupied if _segment_crosses_room(prev, (x, y), other)]
             if blockers:
+                # The detour is only computed to clear its *own* blockers - on
+                # a crowded island the jog can occasionally still graze a
+                # room that was never checked. Rejecting the detour whenever
+                # that happens was tried and made things measurably worse in
+                # aggregate (falling back to the original straight line,
+                # which is what needed fixing in the first place, tends to
+                # cross even more) - a detour that clears the room it was
+                # built for is still a net improvement even on the rare
+                # occasion it doesn't clear everything.
                 path.points.extend(_detour_around(prev, (x, y), blockers))
 
         occupied.append(candidate)

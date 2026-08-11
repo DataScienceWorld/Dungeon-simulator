@@ -202,16 +202,25 @@ class DungeonGenerator:
 
             if tag in ("branch_four_way", "branch_t", "branch_side_left", "branch_side_right"):
                 if tag == "branch_side_left":
-                    branch_dir = "left"
+                    branch_dirs = ["left"]
                 elif tag == "branch_side_right":
-                    branch_dir = "right"
+                    branch_dirs = ["right"]
                 else:
-                    branch_dir = "left" if self.dice.chance(50) else "right"
-                if not self.budget_exhausted():
-                    node.children.append(self.resolve_passage(level))
-                else:
-                    node.children.append(self._edge_node(level))
-                events.append({"type": "child", "turn": branch_dir})
+                    # A T-junction and a four-way intersection both open onto
+                    # a *perpendicular* corridor, i.e. both left and right -
+                    # a four-way additionally keeps going forward (handled by
+                    # falling through to `continue` below), a T doesn't (it
+                    # returns instead of looping back for another trunk
+                    # segment - there is no "forward" at a T).
+                    branch_dirs = ["left", "right"]
+                for branch_dir in branch_dirs:
+                    if not self.budget_exhausted():
+                        node.children.append(self.resolve_passage(level))
+                    else:
+                        node.children.append(self._edge_node(level))
+                    events.append({"type": "child", "turn": branch_dir})
+                if tag == "branch_t":
+                    return node
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
                     return node
@@ -349,6 +358,11 @@ class DungeonGenerator:
                     lines=[f"[Room d20={shape['roll']}] {shape['text']}"],
                     geo={"width_ft": shape["dims"][0], "length_ft": shape["dims"][1], "shape": shape.get("shape", "rect")})
         self.rooms_created += 1
+        extra_exits = max(0, shape["exits"] - 1)
+        node.lines.append(
+            f"Exits: {shape['exits']} ({extra_exits} beyond the way in)."
+            if extra_exits else f"Exits: {shape['exits']} (only the way in - no other exits)."
+        )
 
         size_bonus = self._room_size_bonus(shape["dims"])
         value, entry = ROOM_CONTENTS_TABLE.roll(self.dice, modifier + size_bonus)
@@ -356,7 +370,6 @@ class DungeonGenerator:
         node.lines.extend(self._room_contents_lines(entry.payload, level))
         node.geo["content_tag"] = entry.payload["tag"]
 
-        extra_exits = max(0, shape["exits"] - 1)
         exit_slots = []
         for _ in range(extra_exits):
             slot = ("forward", "right", "left")[len(exit_slots) % 3]

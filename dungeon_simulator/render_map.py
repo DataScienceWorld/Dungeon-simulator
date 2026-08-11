@@ -271,9 +271,10 @@ def _room_hue(room: dict) -> str:
 
 
 def _room_summary(lines: list[str], limit: int = 130) -> str:
-    # lines[0] is the shape roll, lines[1] is just the "[Room Contents d100=NN]"
-    # header - the actual description starts at lines[2].
-    body = " ".join(line for line in lines[2:] if line).strip()
+    # lines[0] is the shape roll, lines[1] is the exits count, lines[2] is
+    # just the "[Room Contents d100=NN]" header - the actual description
+    # starts at lines[3].
+    body = " ".join(line for line in lines[3:] if line).strip()
     if not body:
         body = "Stanza vuota."
     if len(body) > limit:
@@ -366,6 +367,20 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             f'<circle cx="{px_}" cy="{py_}" r="16" fill="none" stroke="{_DG_FIXED_HUES["violet"]}" '
             f'stroke-width="3" stroke-dasharray="6 6"><title>Portale - prosegue altrove sulla mappa</title></circle>'
         )
+
+    # dungeongen only knows about rooms/passages (translated from our own
+    # room-to-room links) - it has no idea a dead-end/edge stub even exists,
+    # so unlike the RoughJS renderer (which draws every island["corridors"]
+    # entry generically) this overlay has to draw the little stub line
+    # itself, or a branch off a T-junction/four-way intersection would show
+    # only a cap dot floating with nothing connecting it to the corridor.
+    for corridor in island["corridors"]:
+        if not (isinstance(corridor["id"], str) and corridor["id"].startswith("cap")):
+            continue
+        (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
+        sx_, sy_ = px(sx, sy)
+        ex_, ey_ = px(ex, ey)
+        parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="3" />')
 
     for cap in island["caps"]:
         cx_, cy_ = px(cap["x"], cap["y"])
