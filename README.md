@@ -23,12 +23,16 @@ python3 -m dungeon_simulator --help
 ```
 
 Il formato `html` apre una pagina con due viste: **Mappa** (una vera
-pianta 2D — stanze, corridoi, porte, scale, portali — con un tab per
-ogni livello del dungeon) e **Registro** (l'albero testuale espandibile
-di tutti i tiri). La mappa è ricostruita dalle stesse lunghezze,
-svolte e dimensioni già tirate dal generatore (vedi `layout.py`), non
-è una rappresentazione separata: passare col mouse su stanze/corridoi
-mostra i dettagli del tiro corrispondente.
+pianta 2D — stanze numerate, corridoi, porte, scale, portali, con una
+chiave numerata sotto la mappa e un tab per ogni livello del dungeon) e
+**Registro** (l'albero testuale espandibile di tutti i tiri). La mappa
+è ricostruita dalle stesse lunghezze, svolte e dimensioni già tirate
+dal generatore (vedi `layout.py`), non è una rappresentazione separata:
+passare col mouse su stanze/corridoi mostra i dettagli del tiro
+corrispondente. Il disegno vero e proprio (muri, corridoi, porte...) è
+realizzato lato client con [RoughJS](https://roughjs.com/) (MIT,
+incorporato offline in `vendor/rough.min.js`, nessuna richiesta di
+rete) per un tratto a mano libera invece di un diagramma tecnico.
 
 Opzioni principali:
 
@@ -51,9 +55,10 @@ dungeon_simulator/
   models.py     # Node/Dungeon: l'albero del dungeon generato (con dati "geo" per la mappa)
   generator.py  # DungeonGenerator: la logica di esplorazione/dispaccio
   layout.py     # turtle-graphics: dall'albero generato a coordinate 2D per livello
-  render_map.py # disegna la mappa SVG (stanze, corridoi, porte, scale...) dal layout
+  render_map.py # costruisce i dati della mappa e li passa a RoughJS (disegno a mano libera)
   render.py     # rendering testuale, in dict (per il JSON) e HTML (mappa + registro)
   cli.py        # interfaccia a riga di comando
+  vendor/       # RoughJS incorporato offline (MIT) - vedi vendor/NOTICE.md
 tests/          # test con pytest
 ```
 

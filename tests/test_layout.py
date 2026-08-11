@@ -50,12 +50,28 @@ def test_root_island_is_flagged_as_entrance():
     assert any(isl["is_entrance"] for isl in root_islands)
 
 
+def _first_room_node(node):
+    if node.kind == "room":
+        return node
+    for child in node.children:
+        found = _first_room_node(child)
+        if found is not None:
+            return found
+    return None
+
+
 def test_render_map_section_escapes_content_and_has_svg():
     dungeon = DungeonGenerator(seed=81).generate()
-    dungeon.root.lines.append('<script>alert(1)</script>')
+    room = _first_room_node(dungeon.root)
+    assert room is not None
+    room.lines.append('</script><script>alert(1)</script>')
     html = render_map_section(dungeon)
     assert "<svg" in html
-    assert "<script>alert" not in html
+    # Room/corridor/door/stairs content only ever reaches the page as JSON
+    # fed through `textContent`, never as raw HTML - so injecting a
+    # "</script>" must not be able to close our own data/vendor/render
+    # <script> tags early. There are exactly 3 legitimate closing tags.
+    assert html.count("</script>") == 3
 
 
 def test_render_map_section_never_crashes_across_many_seeds():
