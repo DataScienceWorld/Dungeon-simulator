@@ -103,6 +103,10 @@ _MAP_STYLE = """
     fill: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }
+  .dg-map-entrance-label {
+    font: 700 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    fill: var(--brass);
+  }
 
   /* dungeongen-backed maps: fixed paper background regardless of page theme,
      so the overlay below also uses fixed (non-token) colors on purpose. */
@@ -115,6 +119,10 @@ _MAP_STYLE = """
   .dg-map-label-dg {
     font: 600 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     fill: #333; font-variant-numeric: tabular-nums;
+  }
+  .dg-map-entrance-label-dg {
+    font: 700 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    fill: #a9701f; paint-order: stroke; stroke: #fff; stroke-width: 3px;
   }
 </style>
 """
@@ -224,6 +232,14 @@ _RENDER_SCRIPT_JS = """
       if (!o.isEntrance) oc.setAttribute('stroke-dasharray', '2 2');
       addTitle(oc, o.isEntrance ? 'Ingresso del dungeon' : 'Punto di arrivo su questa mappa');
       svg.appendChild(oc);
+      // A hover-only <title> is invisible on touch devices, so the marker's
+      // meaning also gets a permanent text label right next to it (same
+      // treatment as the stairs' "L{level}" label below).
+      var oLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      oLabel.setAttribute('x', o.x + 16); oLabel.setAttribute('y', o.y + 4);
+      oLabel.setAttribute('class', 'dg-map-entrance-label');
+      oLabel.textContent = o.isEntrance ? 'Ingresso' : 'Arrivo';
+      svg.appendChild(oLabel);
     });
   }
   function boot() {
@@ -366,6 +382,10 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             f'<circle cx="{ox_}" cy="{oy_}" r="13" fill="none" stroke="{_DG_BRASS}" stroke-width="3" '
             f'stroke-dasharray="4 4"><title>{label}</title></circle>'
         )
+    # A hover-only <title> never shows on touch devices, so the marker also
+    # gets a permanent text label (same treatment as the stairs' "L{level}").
+    entrance_text = "Ingresso" if island.get("is_entrance") else "Arrivo"
+    parts.append(f'<text x="{ox_ + 19}" y="{oy_ + 7}" class="dg-map-entrance-label-dg">{entrance_text}</text>')
     return "".join(parts)
 
 
