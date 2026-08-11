@@ -29,6 +29,8 @@ Opzioni principali:
   contenuto dei passaggi (di default vengono omessi per leggibilità).
 - `--limitless-cap N` — numero massimo di stanze usato quando la
   Dungeon Size Table tira "Limitless" (default 40).
+- `--party-level N` — livello del party (default 5), usato dalla Trap
+  Table per scalare i danni delle trappole.
 
 ## Struttura del progetto
 
@@ -52,10 +54,16 @@ tests/          # test con pytest
 - Door Table (d100)
 - Stairs Table (d20)
 - Room Table (d20, forme e dimensioni) e Room Contents Table (d100)
+- Random Architecture / Feature Table (d20), incluso il Portale (voce 19)
+  che ti sposta in un punto casuale del dungeon
+- Secret Door Table (d6), con eventuale porta segreta trappolata
+- Trap Table (d100, "make 4 rolls" come da regolamento — ogni innesco
+  produce 4 componenti-trappola in sequenza, con danno scalato sul
+  livello del party)
+- Clue Table (d100, 100 indizi narrativi)
 
 Alcune tabelle citate nel testo originale ma non incluse nelle pagine
-fornite (Tabella Trappole, Tabella Indizi, Tabella PNG, tabelle di
-tesoro individuale/hoard del DMG, Tabella Architettura Casuale,
+fornite (tabella PNG, tabelle di tesoro individuale/hoard del DMG,
 Tabella Ostacoli) sono state sostituite con generatori semplificati e
 chiaramente isolati in `content.py`, così è facile collegare le
 tabelle ufficiali se disponibili. Un paio di voci della tabella scale

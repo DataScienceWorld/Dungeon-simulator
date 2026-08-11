@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 
-from .generator import DEFAULT_LIMITLESS_ROOMS, DungeonGenerator
+from .generator import DEFAULT_LIMITLESS_ROOMS, DEFAULT_PARTY_LEVEL, DungeonGenerator
 from .render import render_text, to_dict
 
 
@@ -21,6 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Also print explicit 'empty' results for passage contents rolls.")
     parser.add_argument("--limitless-cap", type=int, default=DEFAULT_LIMITLESS_ROOMS,
                          help="Room cap used when the Dungeon Size Table rolls 'Limitless'.")
+    parser.add_argument("--party-level", type=int, default=DEFAULT_PARTY_LEVEL,
+                         help="Party level, used by the Trap Table's level-scaled damage.")
     parser.add_argument("-o", "--output", type=str, default=None, help="Write output to this file instead of stdout.")
     return parser
 
@@ -33,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         limitless_room_cap=args.limitless_cap,
         verbose_empty=args.verbose_empty,
+        party_level=args.party_level,
     )
     dungeon = generator.generate()
 

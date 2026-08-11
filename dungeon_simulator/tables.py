@@ -282,7 +282,6 @@ def _room_triangular(dice: Dice) -> dict:
 def _room_polygon(dice: Dice, side_die: int, exit_die: int, exit_offset: int) -> dict:
     across = dice.roll(side_die) * 10
     exits = max(1, dice.roll(exit_die) + exit_offset)
-    shape = {6: "Hexagonal", 8: "Octagonal", 4: "Pentagonal"}
     return {"text": f"Polygonal room, {across}ft across.", "dims": (across, across), "exits": exits}
 
 
@@ -330,6 +329,62 @@ def roll_room_shape(dice: Dice) -> dict:
 # ---------------------------------------------------------------------------
 # Room Contents Table (d100)
 # ---------------------------------------------------------------------------
+
+RANDOM_ARCHITECTURE_TABLE = RangeTable(20, [
+    (1, 1, "Statue"),
+    (2, 2, "Series of alcoves"),
+    (3, 3, "Fountain"),
+    (4, 4, "1d4 pools"),
+    (5, 5, "Hole in the floor"),
+    (6, 6, "Underground terrarium"),
+    (7, 7, "Pillars along each side - is anything hiding there?"),
+    (8, 8, "Catacombs"),
+    (9, 9, "A puzzle of some sort (Intelligence check required)"),
+    (10, 10, "Sacrificial plinth"),
+    (11, 11, "Temple / shrine"),
+    (12, 12, "Guard post"),
+    (13, 13, "Trapdoor with a ladder"),
+    (14, 14, "Underground stream"),
+    (15, 15, "Natural cavern"),
+    (16, 16, "Ventilation shaft"),
+    (17, 17, "Crystal growth"),
+    (18, 18, "Abandoned campsite"),
+    (19, 19, "Portal - takes you to another, random part of the dungeon"),
+    (20, 20, "Edible fungi / moss farm"),
+])
+
+# ---------------------------------------------------------------------------
+# Secret Door Table (d6)
+# ---------------------------------------------------------------------------
+
+SECRET_DOOR_TABLE = RangeTable(6, [
+    (1, 2, {"beyond": "room", "modifier": 40, "trapped": False}),
+    (3, 4, {"beyond": "passage", "modifier": 40, "trapped": False}),
+    (5, 6, {"beyond": "d4_passage_room", "modifier": 50, "trapped": True}),
+])
+
+# ---------------------------------------------------------------------------
+# Trap Table (d100) - "Make 4 rolls" per the source
+# ---------------------------------------------------------------------------
+
+TRAP_TABLE = RangeTable(100, [
+    (1, 6, {"type": "Poison darts", "notice": 11, "save": 10, "level_mod": -3}),
+    (7, 12, {"type": "Collapsing roof", "notice": 11, "save": 10, "level_mod": -2}),
+    (13, 19, {"type": "Simple pit", "notice": 11, "save": 11, "level_mod": -1}),
+    (20, 26, {"type": "Hidden pit", "notice": 11, "save": 12, "level_mod": -1}),
+    (27, 32, {"type": "Locking pit", "notice": 11, "save": 12, "level_mod": 0}),
+    (33, 38, {"type": "Spiked pit", "notice": 12, "save": 13, "level_mod": 0}),
+    (39, 44, {"type": "Rolling sphere", "notice": 12, "save": 14, "level_mod": 0}),
+    (45, 50, {"type": "Scything blade", "notice": 13, "save": 14, "level_mod": 1}),
+    (51, 56, {"type": "Glyph trap", "notice": 14, "save": 15, "level_mod": 1, "elemental": True}),
+    (57, 63, {"type": "Magic missile spell", "notice": 14, "save": 15, "level_mod": 1}),
+    (64, 69, {"type": "Poison gas / acid spray", "notice": 15, "save": 16, "level_mod": 1}),
+    (70, 76, {"type": "Room fills with water", "notice": 15, "save": 16, "level_mod": 2}),
+    (77, 82, {"type": "Walls begin closing", "notice": 16, "save": 17, "level_mod": 2}),
+    (83, 88, {"type": "Spears come out of the floor", "notice": 17, "save": 18, "level_mod": 2}),
+    (89, 93, {"type": "Spiked grate drops", "notice": 17, "save": 19, "level_mult": 1.5}),
+    (94, 100, {"type": "Trapdoor (snakes / acid below?)", "notice": 18, "save": 20, "level_mult": 2}),
+])
 
 ROOM_CONTENTS_TABLE = RangeTable(100, [
     (1, 4, {"tag": "deadly_encounter", "loot_pct": 45, "clue_pct": 75}),

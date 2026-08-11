@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from .content import (
     encounter_description,
-    generate_architecture_flavour,
     generate_clue,
     generate_hazard,
     generate_hoard,
     generate_npc,
-    generate_trap,
     generate_treasure,
+    roll_trap,
     treasure_tier_for_level,
 )
 from .dice import Dice
@@ -21,24 +20,28 @@ from .tables import (
     DUNGEON_TYPE_TABLE,
     PASSAGE_CONTENTS_TABLE,
     PASSAGE_TABLE,
+    RANDOM_ARCHITECTURE_TABLE,
     ROOM_CONTENTS_TABLE,
+    SECRET_DOOR_TABLE,
     STAIRS_TABLE,
     STARTING_AREA_TABLE,
     roll_room_shape,
 )
 
 DEFAULT_LIMITLESS_ROOMS = 40
+DEFAULT_PARTY_LEVEL = 5
 MAX_PASSAGE_SEGMENTS = 15
 MAX_NODES = 4000
 
 
 class DungeonGenerator:
     def __init__(self, seed: int | None = None, limitless_room_cap: int = DEFAULT_LIMITLESS_ROOMS,
-                 verbose_empty: bool = False):
+                 verbose_empty: bool = False, party_level: int = DEFAULT_PARTY_LEVEL):
         self.dice = Dice(seed)
         self.seed = seed
         self.limitless_room_cap = limitless_room_cap
         self.verbose_empty = verbose_empty
+        self.party_level = party_level
         self._next_id = 0
         self.rooms_created = 0
         self.target_rooms = 0
@@ -87,11 +90,19 @@ class DungeonGenerator:
             roll = self.dice.d4()
             return self.dispatch_beyond("room" if roll <= 2 else "passage", level, modifier)
         if kind == "secret":
-            roll = self.dice.d4()
-            child = self.dispatch_beyond("passage" if roll == 1 else "room", level, modifier)
-            child.lines.insert(0, "(hidden behind a secret door)")
-            return child
+            return self.resolve_secret_door(level)
         raise ValueError(f"Unknown dispatch kind: {kind!r}")
+
+    def resolve_secret_door(self, level: int) -> Node:
+        """Roll the Secret Door Table and merge its result into the node beyond."""
+        value, entry = SECRET_DOOR_TABLE.roll(self.dice)
+        payload = entry.payload
+        lines = [f"[Secret Door d6={value}]"]
+        if payload["trapped"]:
+            lines.append(f"Trapped! {roll_trap(self.dice, self.party_level)}.")
+        child = self.dispatch_beyond(payload["beyond"], level, modifier=payload["modifier"])
+        child.lines = lines + child.lines
+        return child
 
     # -- top level -------------------------------------------------------
 
@@ -153,7 +164,13 @@ class DungeonGenerator:
                 continue
 
             if tag == "architecture":
-                node.lines.append(generate_architecture_flavour(self.dice))
+                arch_value, arch_entry = RANDOM_ARCHITECTURE_TABLE.roll(self.dice)
+                node.lines.append(f"[Architecture d20={arch_value}] {arch_entry.payload}")
+                if arch_value == 19:  # Portal - takes you to another part of the dungeon
+                    sub = self.dice.d4()
+                    child = self.dispatch_beyond("passage" if sub <= 2 else "room", level)
+                    node.children.append(child)
+                    return node
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
                     return node
@@ -174,9 +191,7 @@ class DungeonGenerator:
                     roll, found = self.dice.check(dc=15)
                     if found:
                         node.lines.append(f"A secret door is found here (Perception {roll} vs DC 15)!")
-                        sub = self.dice.d4()
-                        child = self.dispatch_beyond("passage" if sub == 1 else "room", level)
-                        node.children.append(child)
+                        node.children.append(self.resolve_secret_door(level))
                     else:
                         node.lines.append(f"There's a secret door here, but it goes unnoticed (Perception {roll} vs DC 15).")
                 else:
@@ -187,9 +202,7 @@ class DungeonGenerator:
                 roll, found = self.dice.check(dc=15)
                 if found:
                     node.lines.append(f"Secret door found (Perception {roll} vs DC 15)!")
-                    sub = self.dice.d4()
-                    child = self.dispatch_beyond("passage" if sub == 1 else "room", level)
-                    node.children.append(child)
+                    node.children.append(self.resolve_secret_door(level))
                     return node
                 node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed. The passage continues.")
                 segments += 1
@@ -242,7 +255,7 @@ class DungeonGenerator:
             if self.dice.chance(payload["clue_pct"]):
                 lines.append(f"Clue: {generate_clue(self.dice)}.")
         elif tag == "trap":
-            lines.append(f"Trap! {generate_trap(self.dice)}.")
+            lines.append(f"Trap! {roll_trap(self.dice, self.party_level)}.")
         elif tag == "loot":
             if self.dice.chance(payload["loot_pct"]):
                 tier = treasure_tier_for_level(level)
