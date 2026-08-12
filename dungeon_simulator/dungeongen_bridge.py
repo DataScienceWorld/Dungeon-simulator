@@ -121,6 +121,24 @@ def _grid_points_without_collapsing_real_moves(points: list[tuple]) -> list[tupl
     return grid_points
 
 
+def _door_type_at(link: dict, raw_point: tuple) -> "_DGDoorType":
+    """Whether a real door node sits exactly at this end of the link, not
+    just somewhere along it. A link is a compressed room-to-room path that
+    can pass through a real door partway along, a room pushed far from its
+    natural spot, or both - marking *both* ends CLOSED whenever the link
+    has a door anywhere drew a closed-door glyph right on a room's own
+    wall even when that room's actual entrance is a plain, doorless
+    opening (the real door sits deeper in, per the previous commit's own
+    overlay marker there)."""
+    rx, ry = round(raw_point[0], 3), round(raw_point[1], 3)
+    for door in link["doors"]:
+        if (round(door["x1"], 3), round(door["y1"], 3)) == (rx, ry):
+            return _DGDoorType.CLOSED
+        if (round(door["x2"], 3), round(door["y2"], 3)) == (rx, ry):
+            return _DGDoorType.CLOSED
+    return _DGDoorType.OPEN
+
+
 def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     dx, dy = point[0] - cx, point[1] - cy
@@ -274,17 +292,16 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         if not dungeon.add_passage(passage):
             continue  # duplicate room pair or self-loop - skip rather than crash
 
-        door_type = _DGDoorType.CLOSED if link["doors"] else _DGDoorType.OPEN
         start_pt, end_pt = waypoints[0], waypoints[-1]
         dungeon.add_door(_DGDoor(
             x=start_pt[0], y=start_pt[1],
             direction=_door_direction(start_pt, *from_info[1:]),
-            door_type=door_type, room_id=from_id, passage_id=passage.id,
+            door_type=_door_type_at(link, link["points"][0]), room_id=from_id, passage_id=passage.id,
         ))
         dungeon.add_door(_DGDoor(
             x=end_pt[0], y=end_pt[1],
             direction=_door_direction(end_pt, *to_info[1:]),
-            door_type=door_type, room_id=to_id, passage_id=passage.id,
+            door_type=_door_type_at(link, link["points"][-1]), room_id=to_id, passage_id=passage.id,
         ))
 
     # A room's own exit slots that never resolve into a room-to-room link -
