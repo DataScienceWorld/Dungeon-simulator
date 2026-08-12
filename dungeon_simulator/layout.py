@@ -65,14 +65,20 @@ def _pseudo_unit(n: int) -> float:
     return ((n * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF
 
 
-def _wall_offset(node_id: int, wall_length: float) -> float:
+def _banded_wall_offset(index: int, count: int, wall_length: float, node_id: int) -> float:
     """A deterministic offset from the center of a wall of the given length,
-    keeping _WALL_INSET_FRAC clear at each end. Two exits on the same wall
-    (e.g. a room rolling two "forward" exits) get different offsets because
-    they're keyed on different child node ids - previously every exit on a
-    given side landed on the exact same dead-center point."""
-    usable = max(0.0, wall_length * (1 - 2 * _WALL_INSET_FRAC))
-    return (_pseudo_unit(node_id) - 0.5) * usable
+    for the `index`-th of `count` exits sharing that wall. Each exit gets its
+    own equal-width band along the wall - two same-wall exits independently
+    randomized across the *whole* wall can still coincidentally land close
+    enough to read as one (observed: two "forward" exits 6ft apart on a
+    70ft-wide room). Confining each to its own band guarantees a minimum
+    separation of one band width; _WALL_INSET_FRAC still keeps it off that
+    band's own edges, so it doesn't crowd the wall's actual corners either."""
+    band = wall_length / count
+    band_start = -wall_length / 2 + index * band
+    inset = band * _WALL_INSET_FRAC
+    usable = max(0.0, band - 2 * inset)
+    return band_start + inset + _pseudo_unit(node_id) * usable
 
 
 def _new_island() -> dict:
@@ -345,20 +351,31 @@ class _Layout:
             })
 
         slots = node.geo.get("exit_slots", [])
+        # An exit's position along its wall is randomized (deterministically,
+        # keyed on the child's id) rather than fixed dead-center, and - when
+        # more than one exit shares a wall (e.g. a room with two "forward"
+        # slots) - confined to its own equal-width band along that wall.
+        # Independent randomization alone isn't enough: two same-wall exits
+        # can still coincidentally land close enough to read as a single
+        # exit (observed: two "forward" exits only 6ft apart on a 70ft-wide
+        # room); banding guarantees they can never be closer than one band.
+        same_wall_count: dict[str, int] = {}
+        for slot in slots:
+            same_wall_count[slot] = same_wall_count.get(slot, 0) + 1
+        band_index = {"forward": 0, "right": 0, "left": 0}
         for child, slot in zip(node.children, slots):
-            # An exit's position along its wall is randomized (deterministically,
-            # keyed on the child's id) rather than fixed dead-center - two exits
-            # rolled onto the same side (e.g. a room with two "forward" slots)
-            # would otherwise land on the exact same point and look like one.
+            index = band_index[slot]
+            band_index[slot] += 1
+            count = same_wall_count[slot]
             if slot == "forward":
-                offset = _wall_offset(child.id, w)
+                offset = _banded_wall_offset(index, count, w, child.id)
                 ex, ey, eh = far_x + px * offset, far_y + py * offset, heading
             elif slot == "right":
-                offset = _wall_offset(child.id, depth)
+                offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "right")
                 ex, ey = x + dx * (depth / 2 + offset) + px * w / 2, y + dy * (depth / 2 + offset) + py * w / 2
             else:  # left
-                offset = _wall_offset(child.id, depth)
+                offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "left")
                 ex, ey = x + dx * (depth / 2 + offset) - px * w / 2, y + dy * (depth / 2 + offset) - py * w / 2
             # "left"/"right" in the log are relative to the direction of
