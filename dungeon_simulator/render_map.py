@@ -172,8 +172,13 @@ _RENDER_SCRIPT_JS = """
       svg.appendChild(stub1); svg.appendChild(stub2);
     });
     data.rooms.forEach(function (r) {
+      // --bg is meant for a room floor to stand out against the surrounding
+      // --bg-panel, but the two are nearly identical in the dark palette -
+      // a room reads as an unrendered void, just its outline and number
+      // floating in empty space. --line sits a clear step lighter than
+      // --bg-panel in *both* palettes, so it always reads as a floor.
       var floor = rc.rectangle(r.x, r.y, r.w, r.h, {
-        fill: 'var(--bg)', fillStyle: 'solid', stroke: 'none', roughness: 0,
+        fill: 'var(--line)', fillStyle: 'solid', stroke: 'none', roughness: 0,
       });
       floor.setAttribute('class', 'dg-map-room-floor');
       svg.appendChild(floor);
