@@ -427,6 +427,14 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         # own two raw points can be looked up by index in the rounded path
         # directly - no re-interpolation, and no sensitivity to how tiny the
         # door's own segment is next to the rest of a much longer link.
+        #
+        # Also returns the *width* (grid units) the bar should span: a door
+        # dungeongen itself drew a passage through gets the same width that
+        # passage always renders at (a full 1-cell corridor, hardcoded in
+        # dungeongen_bridge) - a shorter, arbitrary bar length would leave a
+        # gap on each side instead of spanning wall to wall like a real door
+        # does. A door with no such passage (its own corridor, drawn by this
+        # same overlay) matches that corridor's own real width instead.
         mid = ((door["x1"] + door["x2"]) / 2, (door["y1"] + door["y2"]) / 2)
         direction = (door["x2"] - door["x1"], door["y2"] - door["y1"])
         for link in island["links"]:
@@ -442,8 +450,9 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
                 break
             rounded = _bridge._grid_points_without_collapsing_real_moves(raw)
             r1, r2 = rounded[i1], rounded[i2]
-            return ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2), (r2[0] - r1[0], r2[1] - r1[1])
-        return mid, direction
+            mid_pt = ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2)
+            return mid_pt, (r2[0] - r1[0], r2[1] - r1[1]), 1.0
+        return mid, direction, 0.5
 
     for corridor in island["corridors"]:
         (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
@@ -457,18 +466,20 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     for door in island["doors"]:
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
             continue  # dungeongen already drew a proper door glyph right here
-        (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
+        (mx_raw, my_raw), (ddx, ddy), width_units = _door_marker_geometry(door)
         mx, my = px(mx_raw, my_raw)
         # A line running *along* the corridor's own direction reads as more
         # corridor, not a door - it can even land invisibly on top of a
         # corridor already drawn there (a door buried mid-link, stretched
         # past by a room pushed far from its natural spot, sits inside the
-        # very corridor dungeongen already rendered). A short bar *across*
-        # the corridor, in the same rust used for every other door glyph, is
-        # what actually reads as a door.
+        # very corridor dungeongen already rendered). A bar *across* the
+        # corridor, in the same rust used for every other door glyph, is what
+        # actually reads as a door - spanning exactly the corridor's own
+        # width (wall to wall), not an arbitrary length that leaves a gap on
+        # each side or overshoots past the walls.
         length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
         perp_x, perp_y = -ddy / length, ddx / length
-        half = max(scale * 0.4, 10.0)
+        half = width_units * scale / 2
         bx1, by1 = mx - perp_x * half, my - perp_y * half
         bx2, by2 = mx + perp_x * half, my + perp_y * half
         title = _html.escape(_full_text(door["lines"]))
