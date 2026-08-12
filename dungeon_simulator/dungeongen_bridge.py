@@ -39,20 +39,22 @@ try:
 except Exception as exc:  # pragma: no cover - environment dependent
     _IMPORT_ERROR = exc
 
-# Our own grid unit is 10 ft, but the rulebook's own tables genuinely produce
-# 5ft features - a passage's minimum length, a door's own width - which is
-# exactly half of dungeongen's cell. At SCALE=1 (1 our-unit = 1 dungeongen
-# cell = 10ft) any real 5ft hop lands on a *half*-integer cell, and rounding
-# it either erases it entirely (both ends round to the same cell) or draws it
-# as a full 10ft cell - neither of which is what actually happened. SCALE=2
-# makes one dungeongen cell 5ft, so every real 5ft feature gets its own exact
-# integer cell, matching the rulebook's own resolution instead of guessing at
-# it. The cost: dungeongen's +/-3200 map-unit safety limit (see
-# _MAX_MAP_UNITS below) now represents *half* the real-world footprint it did
-# before, so islands that used to just fit now more often fall back to the
-# hand-drawn RoughJS renderer instead - an accepted trade-off for correctness
-# over how often the nicer background art applies.
-SCALE = 2
+# Our own grid unit is 10 ft; dungeongen's own cell is fixed at that same
+# 10ft - it has no finer resolution available. The rulebook's own tables
+# genuinely produce 5ft features (a passage's minimum length, a door's own
+# width), exactly half of that cell. Doubling dungeongen's resolution
+# (SCALE=2) to represent those exactly was tried and reverted: it halves the
+# real-world footprint dungeongen's own +/-3200 map-unit crash limit allows,
+# pushing far more dungeons off the nicer background art and onto the
+# hand-drawn RoughJS fallback than the fidelity gain was worth. Instead, a
+# real 5ft feature is drawn on this map as a full 10ft cell, deliberately and
+# consistently - a visible rendering convention (this map's smallest unit is
+# 10ft, so a genuine 5ft passage or door still gets its own distinct cell,
+# just one that reads as twice its real length) rather than a bug. The log
+# and the RoughJS renderer, both working in continuous units, still show the
+# real 5ft. See _grid_points_without_collapsing_real_moves for where this is
+# actually enforced.
+SCALE = 1
 
 _SHAPE_MAP = {
     "rect": "RECT", "square": "SQUARE", "circle": "CIRCLE",
@@ -60,10 +62,8 @@ _SHAPE_MAP = {
 }
 
 # Visual-only floor for dungeongen's background render - see the comment where
-# it's applied in build_dungeongen_dungeon(). In dungeongen-cell units, which
-# are now 5ft each (SCALE=2) - 4 cells is the same real-world 20ft floor this
-# was before SCALE doubled.
-_MIN_ROOM_GRID_UNITS = 4
+# it's applied in build_dungeongen_dungeon().
+_MIN_ROOM_GRID_UNITS = 2
 
 _COMPASS_TO_DG_DIRECTION = {"N": "north", "E": "east", "S": "south", "W": "west"}
 
@@ -92,22 +92,23 @@ def _grid_points_without_collapsing_real_moves(points: list[tuple]) -> list[tupl
     """Round a deduped, continuous-space point list to dungeongen's integer
     grid without silently erasing a real (if sub-cell) hop.
 
-    SCALE=2 makes a real 5ft feature (a passage's minimum length, a door's
-    own width) land on an exact integer cell in the common case - but
-    banded wall offsets and pushback still produce arbitrary fractional
-    coordinates that don't align even at that resolution, and two such
-    points can still round to the very same cell. A naive round-then-dedupe
-    would then just merge them, and that hop - a whole passage segment -
-    vanishes from the map instead of merely being drawn shorter than it
-    really is. Whenever rounding would collapse two points that were
-    genuinely distinct before rounding, the later one is nudged one more
-    cell in the direction it was already moving, so the hop stays visible.
-    The axis that *didn't* move is always copied forward from the previous
-    output point rather than re-rounded independently - our own geometry
-    only ever moves one axis at a time, and independently rounding the
-    untouched axis on a later point could disagree with an axis that was
-    just nudged, handing dungeongen a diagonal waypoint (it has no concept
-    of one and has been observed to hang trying to route it)."""
+    dungeongen's cell is 10ft; a real 5ft passage length, door width, banded
+    wall offset or pushback nudge is genuinely smaller than that, and two
+    points a real but sub-cell distance apart can round to the very same
+    cell. A naive round-then-dedupe would then just merge them, and that hop
+    - a whole passage segment, or a door - vanishes from the map instead of
+    reading as the smallest unit this map can show. This is where the
+    module's own stated convention actually happens: whenever rounding would
+    collapse two points that were genuinely distinct before rounding, the
+    later one is nudged one more cell (10ft) in the direction it was already
+    moving, so the hop stays visible - drawn at this map's minimum size
+    rather than not at all. The axis that *didn't* move is always copied
+    forward from the previous output point rather than re-rounded
+    independently - our own geometry only ever moves one axis at a time, and
+    independently rounding the untouched axis on a later point could
+    disagree with an axis that was just nudged, handing dungeongen a
+    diagonal waypoint (it has no concept of one and has been observed to
+    hang trying to route it)."""
     grid_points = [(_grid(points[0][0]), _grid(points[0][1]))]
     for i in range(1, len(points)):
         prev_gx, prev_gy = grid_points[-1]
