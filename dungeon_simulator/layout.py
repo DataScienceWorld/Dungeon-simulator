@@ -84,7 +84,7 @@ def _banded_wall_offset(index: int, count: int, wall_length: float, node_id: int
 def _new_island() -> dict:
     return {
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
-        "links": [], "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
+        "links": [], "room_exits": [], "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
     }
 
 
@@ -387,6 +387,12 @@ class _Layout:
             # an exit really points on the map, instead of just repeating a
             # direction that can visually be on the opposite side.
             child.geo["approach_heading"] = eh
+            # Recorded regardless of what this exit leads to (room, passage,
+            # stairs, dead end...) so a renderer that can only draw actual
+            # room-to-room links (dungeongen) still knows every wall this
+            # room truly has a breach in, and can punch an opening there even
+            # when nothing beyond it ever resolves into a link.
+            island["room_exits"].append({"room_id": node.id, "x": ex, "y": ey, "direction": eh})
             self._enter(child, ex, ey, eh, level, island, False, _Path(node.id, (ex, ey)))
         return x, y
 
@@ -474,7 +480,7 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
     for door in island["doors"]:
         door["x1"] += shift_x; door["y1"] += shift_y
         door["x2"] += shift_x; door["y2"] += shift_y
-    for group in ("stairs", "portals", "caps"):
+    for group in ("stairs", "portals", "caps", "room_exits"):
         for item in island[group]:
             item["x"] += shift_x
             item["y"] += shift_y

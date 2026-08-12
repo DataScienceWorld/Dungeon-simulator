@@ -28,6 +28,8 @@ try:
         Dungeon as _DGDungeon,
         Door as _DGDoor,
         DoorType as _DGDoorType,
+        Exit as _DGExit,
+        ExitType as _DGExitType,
         Passage as _DGPassage,
         Room as _DGRoom,
         RoomShape as _DGRoomShape,
@@ -53,6 +55,8 @@ _SHAPE_MAP = {
 # Visual-only floor for dungeongen's background render - see the comment where
 # it's applied in build_dungeongen_dungeon().
 _MIN_ROOM_GRID_UNITS = 2
+
+_COMPASS_TO_DG_DIRECTION = {"N": "north", "E": "east", "S": "south", "W": "west"}
 
 
 def available() -> bool:
@@ -189,11 +193,13 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         ))
         room_bounds[room["id"]] = (dg_id, x0, y0, x0 + width, y0 + height)
 
+    covered_exits: set[tuple] = set()
     for link in island["links"]:
         from_info = room_bounds.get(link["from_room"])
         to_info = room_bounds.get(link["to_room"])
         if from_info is None or to_info is None:
             continue
+        covered_exits.add((link["from_room"], round(link["points"][0][0], 3), round(link["points"][0][1], 3)))
 
         points = _dedupe(link["points"])
         if len(points) < 2:
@@ -228,6 +234,28 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             x=end_pt[0], y=end_pt[1],
             direction=_door_direction(end_pt, *to_info[1:]),
             door_type=door_type, room_id=to_id, passage_id=passage.id,
+        ))
+
+    # A room's own exit slots that never resolve into a room-to-room link -
+    # a branch that stairs, dead-ends, or hits the map edge before reaching
+    # another room in this island - have no Door of their own above, since
+    # that loop only sees the links our layout math actually resolved. Left
+    # alone, dungeongen draws a solid, unbroken wall there even though the
+    # room genuinely has an opening (the overlay's own stairs/dead-end icons
+    # then float with no wall breach to connect to). An Exit is a one-sided
+    # door - it punches the same wall breach without needing a room on the
+    # other side.
+    for room_exit in island.get("room_exits", []):
+        key = (room_exit["room_id"], round(room_exit["x"], 3), round(room_exit["y"], 3))
+        if key in covered_exits:
+            continue
+        from_info = room_bounds.get(room_exit["room_id"])
+        if from_info is None:
+            continue
+        dungeon.add_exit(_DGExit(
+            x=_grid(room_exit["x"]), y=_grid(room_exit["y"]),
+            direction=_COMPASS_TO_DG_DIRECTION.get(room_exit["direction"], "north"),
+            exit_type=_DGExitType.EXIT, room_id=from_info[0],
         ))
 
     return dungeon

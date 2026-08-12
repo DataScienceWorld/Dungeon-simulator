@@ -379,19 +379,40 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             f'stroke-width="3" stroke-dasharray="6 6"><title>Portale - prosegue altrove sulla mappa</title></circle>'
         )
 
-    # dungeongen only knows about rooms/passages (translated from our own
-    # room-to-room links) - it has no idea a dead-end/edge stub even exists,
-    # so unlike the RoughJS renderer (which draws every island["corridors"]
-    # entry generically) this overlay has to draw the little stub line
-    # itself, or a branch off a T-junction/four-way intersection would show
-    # only a cap dot floating with nothing connecting it to the corridor.
+    # dungeongen only knows about rooms and the room-to-room links our own
+    # layout math actually resolved - any branch that stairs, dead-ends, or
+    # hits the map edge before reaching another room in this island (a
+    # T-junction side branch, a room's third exit that just leads to stairs,
+    # ...) has no equivalent in its Room/Door/Passage model at all. Unlike
+    # the RoughJS renderer (which draws every island["corridors"]/["doors"]
+    # entry generically) this overlay has to draw those itself, or they'd be
+    # entirely invisible - not even a stub - between the room wall and
+    # whatever icon (stairs, dead end, edge) sits at the far end.
+    link_points = {
+        (round(px_, 3), round(py_, 3)) for link in island["links"] for px_, py_ in link["points"]
+    }
+
+    def _covered(x: float, y: float) -> bool:
+        return (round(x, 3), round(y, 3)) in link_points
+
     for corridor in island["corridors"]:
-        if not (isinstance(corridor["id"], str) and corridor["id"].startswith("cap")):
-            continue
         (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
+        if _covered(sx, sy):
+            continue  # part of a room-to-room link dungeongen already drew
         sx_, sy_ = px(sx, sy)
         ex_, ey_ = px(ex, ey)
         parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="3" />')
+
+    for door in island["doors"]:
+        if _covered(door["x1"], door["y1"]):
+            continue  # part of a room-to-room link - dungeongen already drew a proper door glyph
+        x1_, y1_ = px(door["x1"], door["y1"])
+        x2_, y2_ = px(door["x2"], door["y2"])
+        title = _html.escape(_full_text(door["lines"]))
+        parts.append(
+            f'<line x1="{x1_}" y1="{y1_}" x2="{x2_}" y2="{y2_}" stroke="{_DG_INK}" stroke-width="3">'
+            f"<title>{title}</title></line>"
+        )
 
     for cap in island["caps"]:
         cx_, cy_ = px(cap["x"], cap["y"])
