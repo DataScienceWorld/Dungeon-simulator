@@ -461,6 +461,15 @@ class _Layout:
                 path.points.append((x, y))
                 moved = True
             elif etype == "turn":
+                # A turn with nothing walked yet ("door in the left wall",
+                # rolled with no length of its own) still means the passage
+                # itself is a real 5ft space *in its original heading* -
+                # the door is a feature found on one of its walls, not the
+                # reason the passage has no footprint of its own. Applying
+                # the minimum-length floor in the *new* heading instead would
+                # put the passage on top of the door's own far side, with
+                # nothing distinct at the room's exit at all.
+                ensure_min_length()
                 heading = _rotate(heading, event["dir"])
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
