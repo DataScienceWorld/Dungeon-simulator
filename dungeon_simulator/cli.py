@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Room cap used when the Dungeon Size Table rolls 'Limitless'.")
     parser.add_argument("--party-level", type=int, default=DEFAULT_PARTY_LEVEL,
                          help="Party level, used by the Trap Table's level-scaled damage.")
+    parser.add_argument("--max-depth", type=int, default=None,
+                         help="Cap exploration to this many room/passage/door/stairs hops from the "
+                              "entrance, on top of the Dungeon Size Table's own room-count budget.")
     parser.add_argument("-o", "--output", type=str, default=None, help="Write output to this file instead of stdout.")
     return parser
 
@@ -37,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         limitless_room_cap=args.limitless_cap,
         verbose_empty=args.verbose_empty,
         party_level=args.party_level,
+        max_depth=args.max_depth,
     )
     dungeon = generator.generate()
 

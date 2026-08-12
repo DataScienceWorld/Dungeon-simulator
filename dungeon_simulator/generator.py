@@ -53,12 +53,18 @@ MAX_NODES = 4000
 
 class DungeonGenerator:
     def __init__(self, seed: int | None = None, limitless_room_cap: int = DEFAULT_LIMITLESS_ROOMS,
-                 verbose_empty: bool = False, party_level: int = DEFAULT_PARTY_LEVEL):
+                 verbose_empty: bool = False, party_level: int = DEFAULT_PARTY_LEVEL,
+                 max_depth: int | None = None):
         self.dice = Dice(seed)
         self.seed = seed
         self.limitless_room_cap = limitless_room_cap
         self.verbose_empty = verbose_empty
         self.party_level = party_level
+        # Distance from the entrance, in dispatch_beyond() hops (each
+        # room/passage/door/stairs counts as one) - an *additional*, simpler
+        # cap alongside the Dungeon Size Table's own room-count budget.
+        # None means no depth limit (the table roll alone decides size).
+        self.max_depth = max_depth
         self._next_id = 0
         self.rooms_created = 0
         self.target_rooms = 0
@@ -75,6 +81,9 @@ class DungeonGenerator:
 
     def budget_exhausted(self) -> bool:
         return self.rooms_created >= self.target_rooms or self.node_count >= MAX_NODES
+
+    def _depth_exceeded(self, depth: int) -> bool:
+        return self.max_depth is not None and depth > self.max_depth
 
     def _edge_node(self, level: int) -> Node:
         return Node(
@@ -94,40 +103,45 @@ class DungeonGenerator:
             job = self._queue.popleft()
             job()
 
-    def dispatch_beyond(self, kind: str, level: int, modifier: int = 0) -> Node:
-        """Resolve whatever lies beyond a passage/door/stairs, respecting the room budget.
+    def dispatch_beyond(self, kind: str, level: int, modifier: int = 0, depth: int = 0) -> Node:
+        """Resolve whatever lies beyond a passage/door/stairs, respecting the
+        room budget and, if set, the max-depth cap.
 
         Per the Dungeon Size Table's rule: once the target room count is
         reached, rooms stop having extra exits and passages tend to dead-end.
+        `depth` counts hops from the entrance (the start node is depth 0) and
+        is an additional, simpler way to bound exploration - unlike the room
+        budget it doesn't need dequeue-time fairness, since every node at the
+        same depth is capped identically regardless of processing order.
 
         Returns a placeholder Node immediately - the real content is filled
         in later, breadth-first, by _run_queue(). A cheap upfront check still
-        short-circuits to an edge node when the budget is *already*
-        exhausted (avoiding pointless queue growth); jobs enqueued while
-        there's still budget left get their own, more up-to-date check when
-        they're actually dequeued.
+        short-circuits to an edge node when a budget is *already* exhausted
+        (avoiding pointless queue growth); jobs enqueued while there's still
+        room budget left get their own, more up-to-date check when they're
+        actually dequeued.
         """
         if kind == "d4_passage_stairs_room":
             roll = self.dice.d4()
-            return self.dispatch_beyond({1: "passage", 2: "stairs", 3: "room", 4: "room"}[roll], level, modifier)
+            return self.dispatch_beyond({1: "passage", 2: "stairs", 3: "room", 4: "room"}[roll], level, modifier, depth)
         if kind == "d4_passage_room":
             roll = self.dice.d4()
-            return self.dispatch_beyond("passage" if roll == 1 else "room", level, modifier)
+            return self.dispatch_beyond("passage" if roll == 1 else "room", level, modifier, depth)
         if kind == "d4_room_passage":
             roll = self.dice.d4()
-            return self.dispatch_beyond("room" if roll <= 2 else "passage", level, modifier)
+            return self.dispatch_beyond("room" if roll <= 2 else "passage", level, modifier, depth)
         if kind == "secret":
-            return self.resolve_secret_door(level, modifier)
-        if self.budget_exhausted():
+            return self.resolve_secret_door(level, modifier, depth)
+        if self.budget_exhausted() or self._depth_exceeded(depth):
             return self._edge_node(level)
         if kind == "room":
-            return self._enqueue(level, self._fill_room, level, modifier)
+            return self._enqueue(level, self._fill_room, level, modifier, depth)
         if kind == "passage":
-            return self._enqueue(level, self._fill_passage, level)
+            return self._enqueue(level, self._fill_passage, level, depth)
         if kind == "stairs":
-            return self._enqueue(level, self._fill_stairs, level)
+            return self._enqueue(level, self._fill_stairs, level, depth)
         if kind == "door":
-            return self._enqueue(level, self._fill_door, level)
+            return self._enqueue(level, self._fill_door, level, depth)
         raise ValueError(f"Unknown dispatch kind: {kind!r}")
 
     def _enqueue(self, level: int, fill, *args) -> Node:
@@ -135,21 +149,24 @@ class DungeonGenerator:
         self._queue.append(lambda: fill(node, *args))
         return node
 
-    def resolve_secret_door(self, level: int, modifier: int = 0) -> Node:
+    def resolve_secret_door(self, level: int, modifier: int = 0, depth: int = 0) -> Node:
         """Roll the Secret Door Table and merge its result into the node beyond.
 
         The "beyond" node is itself a deferred placeholder (from
         dispatch_beyond), so the prefix lines can't be prepended yet - that
         has to wait until the placeholder's own fill job has actually run.
         Queuing the prepend step right after it keeps the order correct
-        without needing the two jobs to know about each other.
+        without needing the two jobs to know about each other. The secret
+        door itself has no Node of its own, so it doesn't add to `depth` -
+        whatever's beyond it is at the same distance from the entrance as if
+        there were no secret door at all.
         """
         value, entry = SECRET_DOOR_TABLE.roll(self.dice)
         payload = entry.payload
         prefix = [f"[Secret Door d6={value}]"]
         if payload["trapped"]:
             prefix.append(f"Trapped! {roll_trap(self.dice, self.party_level)}.")
-        child = self.dispatch_beyond(payload["beyond"], level, modifier=modifier or payload["modifier"])
+        child = self.dispatch_beyond(payload["beyond"], level, modifier=modifier or payload["modifier"], depth=depth)
         self._queue.append(lambda: setattr(child, "lines", prefix + child.lines))
         return child
 
@@ -179,7 +196,7 @@ class DungeonGenerator:
             roll = self.dice.d4()
             start_kind = "passage" if roll <= 2 else "room"
             root.lines.append("Open entrance.")
-        child = self.dispatch_beyond(start_kind, level=1)
+        child = self.dispatch_beyond(start_kind, level=1, depth=1)
         root.children.append(child)
 
         self._run_queue()
@@ -196,8 +213,8 @@ class DungeonGenerator:
 
     # -- passages ---------------------------------------------------------
 
-    def _fill_passage(self, node: Node, level: int) -> None:
-        if self.budget_exhausted():
+    def _fill_passage(self, node: Node, level: int, depth: int) -> None:
+        if self.budget_exhausted() or self._depth_exceeded(depth):
             self._make_edge(node)
             return
         node.kind = "passage"
@@ -245,7 +262,7 @@ class DungeonGenerator:
                 node.lines.append(f"[Architecture d20={arch_value}] {arch_entry.payload}")
                 if arch_value == 19:  # Portal - takes you to another, disconnected part of the dungeon
                     sub = self.dice.d4()
-                    child = self.dispatch_beyond("passage" if sub <= 2 else "room", level)
+                    child = self.dispatch_beyond("passage" if sub <= 2 else "room", level, depth=depth + 1)
                     node.children.append(child)
                     events.append({"type": "child", "turn": None, "portal": True})
                     return
@@ -268,7 +285,7 @@ class DungeonGenerator:
                     # segment - there is no "forward" at a T).
                     branch_dirs = ["left", "right"]
                 for branch_dir in branch_dirs:
-                    child = self.dispatch_beyond("passage", level)
+                    child = self.dispatch_beyond("passage", level, depth=depth + 1)
                     node.children.append(child)
                     events.append({"type": "child", "turn": branch_dir})
                 if tag == "branch_t":
@@ -283,7 +300,7 @@ class DungeonGenerator:
                     roll, found = self.dice.check(dc=15)
                     if found:
                         node.lines.append(f"A secret door is found here (Perception {roll} vs DC 15)!")
-                        node.children.append(self.dispatch_beyond("secret", level))
+                        node.children.append(self.dispatch_beyond("secret", level, depth=depth + 1))
                         events.append({"type": "child", "turn": None})
                     else:
                         node.lines.append(f"There's a secret door here, but it goes unnoticed (Perception {roll} vs DC 15).")
@@ -295,7 +312,7 @@ class DungeonGenerator:
                 roll, found = self.dice.check(dc=15)
                 if found:
                     node.lines.append(f"Secret door found (Perception {roll} vs DC 15)!")
-                    node.children.append(self.dispatch_beyond("secret", level))
+                    node.children.append(self.dispatch_beyond("secret", level, depth=depth + 1))
                     events.append({"type": "child", "turn": None})
                     return
                 node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed. The passage continues.")
@@ -306,13 +323,13 @@ class DungeonGenerator:
 
             if tag == "shaft":
                 sub = self.dice.d4()
-                child = self.dispatch_beyond("passage" if sub <= 2 else "room", level + 1)
+                child = self.dispatch_beyond("passage" if sub <= 2 else "room", level + 1, depth=depth + 1)
                 node.children.append(child)
                 events.append({"type": "child", "turn": None})
                 return
 
             # terminal: door / stairs / room
-            child = self.dispatch_beyond(tag, level)
+            child = self.dispatch_beyond(tag, level, depth=depth + 1)
             node.children.append(child)
             events.append({"type": "child", "turn": None})
             return
@@ -360,8 +377,8 @@ class DungeonGenerator:
 
     # -- doors --------------------------------------------------------------
 
-    def _fill_door(self, node: Node, level: int) -> None:
-        if self.budget_exhausted():
+    def _fill_door(self, node: Node, level: int, depth: int) -> None:
+        if self.budget_exhausted() or self._depth_exceeded(depth):
             self._make_edge(node)
             return
         value, entry = DOOR_TABLE.roll(self.dice)
@@ -392,12 +409,12 @@ class DungeonGenerator:
         node.kind = "door"
         node.lines = lines
         node.geo["length_ft"] = 5
-        node.children.append(self.dispatch_beyond(payload["beyond"], level))
+        node.children.append(self.dispatch_beyond(payload["beyond"], level, depth=depth + 1))
 
     # -- stairs ---------------------------------------------------------------
 
-    def _fill_stairs(self, node: Node, level: int) -> None:
-        if self.budget_exhausted():
+    def _fill_stairs(self, node: Node, level: int, depth: int) -> None:
+        if self.budget_exhausted() or self._depth_exceeded(depth):
             self._make_edge(node)
             return
         value, entry = STAIRS_TABLE.roll(self.dice)
@@ -406,12 +423,12 @@ class DungeonGenerator:
         node.kind = "stairs"
         node.lines = [f"[Stairs d20={value}] {payload['text']}"]
         node.geo.update({"length_ft": 10, "level_delta": payload["level_delta"], "to_level": new_level})
-        node.children.append(self.dispatch_beyond(payload["beyond"], new_level, payload.get("modifier", 0)))
+        node.children.append(self.dispatch_beyond(payload["beyond"], new_level, payload.get("modifier", 0), depth=depth + 1))
 
     # -- rooms ------------------------------------------------------------------
 
-    def _fill_room(self, node: Node, level: int, modifier: int = 0) -> None:
-        if self.budget_exhausted():
+    def _fill_room(self, node: Node, level: int, modifier: int, depth: int) -> None:
+        if self.budget_exhausted() or self._depth_exceeded(depth):
             self._make_edge(node)
             return
         shape = roll_room_shape(self.dice)
@@ -436,7 +453,7 @@ class DungeonGenerator:
             slot = ("forward", "right", "left")[len(exit_slots) % 3]
             exit_slots.append(slot)
             is_door = self.dice.chance(50)
-            node.children.append(self.dispatch_beyond("door" if is_door else "passage", level))
+            node.children.append(self.dispatch_beyond("door" if is_door else "passage", level, depth=depth + 1))
         node.geo["exit_slots"] = exit_slots
 
     @staticmethod
