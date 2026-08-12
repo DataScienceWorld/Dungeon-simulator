@@ -425,18 +425,18 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     # _walk_room) stretches the link well past that door's own position, so
     # the door itself would otherwise get no visual mark at all: covered by
     # a link, yet nowhere dungeongen actually draws it.
-    link_endpoints = {
-        (round(link["points"][0][0], 3), round(link["points"][0][1], 3),
-         round(link["points"][-1][0], 3), round(link["points"][-1][1], 3))
-        for link in island["links"]
-    }
+    # Matched by cell rather than by raw point, for the same reason
+    # _door_type_at is: a door 5ft from a room's wall is a different point but
+    # the same 10ft cell, and it's the cell that decides whether dungeongen
+    # drew a glyph for it. Comparing raw points here would re-draw a rust bar
+    # on top of a door dungeongen had already drawn properly.
+    link_end_cells = {cell for link in island["links"] for cell in _bridge.link_end_cells(link)}
 
     def _covered(x: float, y: float) -> bool:
         return (round(x, 3), round(y, 3)) in link_points
 
-    def _door_drawn_by_dungeongen(x: float, y: float) -> bool:
-        rx, ry = round(x, 3), round(y, 3)
-        return any((rx, ry) in ((sx, sy), (ex, ey)) for sx, sy, ex, ey in link_endpoints)
+    def _door_drawn_by_dungeongen(door) -> bool:
+        return any(cell in link_end_cells for cell in _bridge.door_cells(door))
 
     def _door_marker_geometry(door):
         """Where to draw a door's marker, in grid units, plus the direction
@@ -486,10 +486,20 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         )
 
     for door in island["doors"]:
-        if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
-            continue  # dungeongen already drew a proper door glyph right here
         (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
         mx, my = px(mx_raw, my_raw)
+        title = _html.escape(_full_text(door["lines"]))
+        if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door):
+            # dungeongen drew a proper door glyph here, so drawing a rust bar
+            # over it would just double-mark the same door - but its glyph
+            # carries no tooltip, so leave an invisible hit area behind to
+            # keep the door's own log text reachable from the map.
+            hit = max(scale * 0.5, 14.0)
+            parts.append(
+                f'<rect x="{mx - hit}" y="{my - hit}" width="{hit * 2}" height="{hit * 2}" '
+                f'class="dg-map-hit"><title>{title}</title></rect>'
+            )
+            continue
         # A line running *along* the corridor's own direction reads as more
         # corridor, not a door - it can even land invisibly on top of a
         # corridor already drawn there (a door buried mid-link, stretched
@@ -507,7 +517,6 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         half = max(scale * 0.4, 10.0)
         bx1, by1 = mx - perp_x * half, my - perp_y * half
         bx2, by2 = mx + perp_x * half, my + perp_y * half
-        title = _html.escape(_full_text(door["lines"]))
         parts.append(
             f'<line x1="{bx1}" y1="{by1}" x2="{bx2}" y2="{by2}" stroke="{_DG_FIXED_HUES["rust"]}" stroke-width="5">'
             f"<title>{title}</title></line>"

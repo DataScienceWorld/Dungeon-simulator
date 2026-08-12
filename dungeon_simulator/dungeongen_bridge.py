@@ -151,20 +151,39 @@ def _grid_cell_path(points: list[tuple]) -> list[tuple]:
     return _dedupe(cells)
 
 
-def _door_type_at(link: dict, raw_point: tuple) -> "_DGDoorType":
-    """Whether a real door node sits exactly at this end of the link, not
-    just somewhere along it. A link is a compressed room-to-room path that
-    can pass through a real door partway along, a room pushed far from its
-    natural spot, or both - marking *both* ends CLOSED whenever the link
-    has a door anywhere drew a closed-door glyph right on a room's own
-    wall even when that room's actual entrance is a plain, doorless
-    opening (the real door sits deeper in, per the previous commit's own
-    overlay marker there)."""
-    rx, ry = round(raw_point[0], 3), round(raw_point[1], 3)
+def door_cells(door: dict) -> list[tuple]:
+    """The cells a door's own segment occupies, by the same conversion the
+    corridor around it uses."""
+    return _grid_cell_path([(door["x1"], door["y1"]), (door["x2"], door["y2"])])
+
+
+def link_end_cells(link: dict) -> tuple:
+    """A link's own first and last cell - the two places dungeongen is able to
+    put a door glyph, since it only ever draws one where a passage meets a
+    room."""
+    cells = _grid_cell_path(_dedupe(link["points"]))
+    return cells[0], cells[-1]
+
+
+def _door_type_at(link: dict, end_cell: tuple) -> "_DGDoorType":
+    """Whether a real door node occupies this end of the link, rather than
+    sitting somewhere further along it. A link is a compressed room-to-room
+    path that can pass through a real door partway along, a room pushed far
+    from its natural spot, or both - marking *both* ends CLOSED whenever the
+    link has a door anywhere drew a closed-door glyph on a room's own wall
+    even where that room's entrance is a plain, doorless opening.
+
+    The comparison is by cell, not by raw coordinate: a door 5ft from the
+    room's wall is a different *point* but the same 10ft *cell*, and this
+    map's whole convention is that a 5ft feature occupies its cell. Matching
+    raw points instead left such a door OPEN - and in dungeongen an open door
+    is not merely a different glyph: `Map._trace_connected_region` walks
+    straight through it, so the room and the corridor collapse into a single
+    region and the wall between them is never drawn at all. A corridor
+    running alongside the room it leaves then reads as part of that room
+    rather than as a separate passage."""
     for door in link["doors"]:
-        if (round(door["x1"], 3), round(door["y1"], 3)) == (rx, ry):
-            return _DGDoorType.CLOSED
-        if (round(door["x2"], 3), round(door["y2"], 3)) == (rx, ry):
+        if end_cell in door_cells(door):
             return _DGDoorType.CLOSED
     return _DGDoorType.OPEN
 
@@ -320,6 +339,10 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             if len(waypoints) < 2:
                 continue
 
+        # the link's own end cells, independent of any approach stub spliced
+        # on above - a door belongs where our geometry puts it, not on a cell
+        # invented to satisfy dungeongen's routing
+        start_cell, end_cell = link_end_cells(link)
         from_id, to_id = from_info[0], to_info[0]
         passage = _DGPassage(start_room=from_id, end_room=to_id, waypoints=waypoints, width=1)
         if not dungeon.add_passage(passage):
@@ -329,12 +352,12 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         dungeon.add_door(_DGDoor(
             x=start_pt[0], y=start_pt[1],
             direction=_door_direction(start_pt, *from_info[1:]),
-            door_type=_door_type_at(link, link["points"][0]), room_id=from_id, passage_id=passage.id,
+            door_type=_door_type_at(link, start_cell), room_id=from_id, passage_id=passage.id,
         ))
         dungeon.add_door(_DGDoor(
             x=end_pt[0], y=end_pt[1],
             direction=_door_direction(end_pt, *to_info[1:]),
-            door_type=_door_type_at(link, link["points"][-1]), room_id=to_id, passage_id=passage.id,
+            door_type=_door_type_at(link, end_cell), room_id=to_id, passage_id=passage.id,
         ))
 
     # A room's own exit slots that never resolve into a room-to-room link -
