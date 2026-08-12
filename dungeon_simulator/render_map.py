@@ -227,6 +227,12 @@ _RENDER_SCRIPT_JS = """
       var c = rc.circle(cap.x, cap.y, 8, { fill: 'var(--slate)', fillStyle: 'solid', stroke: 'none', roughness: 1.4, seed: seedFor(cap.id, 9) });
       addTitle(c, cap.kind === 'edge' ? 'Limite del dungeon' : 'Vicolo cieco');
       svg.appendChild(c);
+      // <title> tooltips don't show on touch devices; label lets the id be matched to the log entry.
+      var capLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      capLabel.setAttribute('x', cap.x + 11); capLabel.setAttribute('y', cap.y + 4);
+      capLabel.setAttribute('class', 'dg-map-label');
+      capLabel.textContent = '#' + cap.id;
+      svg.appendChild(capLabel);
     });
     data.origins.forEach(function (o) {
       var oc = rc.circle(o.x, o.y, 12, {
@@ -391,6 +397,8 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         cx_, cy_ = px(cap["x"], cap["y"])
         label = "Limite del dungeon" if cap["kind"] == "edge" else "Vicolo cieco"
         parts.append(f'<circle cx="{cx_}" cy="{cy_}" r="8" fill="{_DG_FIXED_HUES["slate"]}"><title>{label}</title></circle>')
+        # <title> tooltips don't show on touch devices; label lets the id be matched to the log entry.
+        parts.append(f'<text x="{cx_ + 11}" y="{cy_ + 7}" class="dg-map-label-dg">#{cap["id"]}</text>')
 
     ox, oy = island["origin"]
     ox_, oy_ = px(ox, oy)
@@ -671,7 +679,7 @@ def render_map_section(dungeon) -> str:
         f'<span class="dg-swatch">{_LEGEND_ICONS["door"]}Porta</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["stairs"]}Scale (▲ su / ▼ giù, con livello di arrivo)</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["portal"]}Portale magico</span>'
-        f'<span class="dg-swatch">{_LEGEND_ICONS["cap"]}Vicolo cieco / limite mappa</span>'
+        f'<span class="dg-swatch">{_LEGEND_ICONS["cap"]}Vicolo cieco / limite mappa (il numero è l\'id nel registro, per capire perché)</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["entrance"]}Ingresso del dungeon</span>'
         '<span class="dg-map-legend-title">Colore stanza = contenuto</span>'
         + "".join(
