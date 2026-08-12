@@ -104,3 +104,42 @@ def test_render_map_section_falls_back_when_dungeongen_forced_unavailable(monkey
     html = render_map_section(dungeon)
     assert 'class="dg-map-svg dg-map-svg-dungeongen"' not in html
     assert "<svg" in html
+
+
+def test_overlay_offset_matches_where_dungeongen_actually_draws():
+    """The overlay's grid->pixel transform must undo the exact normalization
+    dungeongen's own adapter applied (its integer Dungeon.bounds), not an
+    equivalent-looking one derived from our continuous coordinates. When the
+    two disagreed the whole overlay - room hit-boxes, door markers, stair
+    icons - sat a full cell away from the art it annotates."""
+    from dungeongen.graphics.conversions import grid_to_map
+
+    checked = 0
+    for seed in (1, 2, 4, 8, 72):
+        dungeon = DungeonGenerator(seed=seed).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                _, off_x, off_y, scale, _, _ = bridge.render_island_svg(island)
+                dg = bridge.build_dungeongen_dungeon(island)
+                dg_map = bridge._convert_dungeon(dg, show_numbers=False)
+                pad_x, pad_y = grid_to_map(
+                    dg_map.options.map_border_cells, dg_map.options.map_border_cells
+                )
+                bounds = dg_map.bounds
+                # where dungeongen really drew each room, in the SVG's own pixels
+                drawn = set()
+                for room in dg_map.rooms:
+                    bbox = room.shape.bounds
+                    drawn.add((round(bbox.x + pad_x - bounds.x, 3),
+                               round(bbox.y + pad_y - bounds.y, 3)))
+                for layout_room in dg.rooms.values():
+                    projected = (round(off_x + layout_room.x * scale, 3),
+                                 round(off_y + layout_room.y * scale, 3))
+                    assert projected in drawn, (
+                        f"seed {seed}: overlay projects room to {projected}, "
+                        f"but dungeongen drew rooms at {sorted(drawn)}"
+                    )
+                    checked += 1
+    assert checked, "expected at least one island to render through dungeongen"

@@ -367,19 +367,6 @@ def fits_size_limit(island: dict) -> bool:
     return island_extent_map_units(island) <= _MAX_MAP_UNITS
 
 
-def _island_grid_bbox(island: dict) -> tuple[float, float, float, float]:
-    """Our own bounding box (grid units) over an island's rooms and links -
-    the same footprint dungeongen is given to draw."""
-    xs, ys = [], []
-    for room in island["rooms"]:
-        for cx, cy in room["corners"]:
-            xs.append(cx); ys.append(cy)
-    for link in island["links"]:
-        for px_, py_ in link["points"]:
-            xs.append(px_); ys.append(py_)
-    return min(xs), min(ys), max(xs), max(ys)
-
-
 def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]:
     """Render one island's rooms/passages/doors to an SVG string via dungeongen.
 
@@ -390,17 +377,23 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
     in the same pixel space as the returned SVG (width x height).
 
     dungeongen's own conversion re-normalizes whatever it's given to start at
-    its own local origin - it ignores the absolute grid position we pass in -
-    so the offset is computed from our own bbox, not from `dungeon_map.bounds`
-    (which is only trustworthy for width/height, not x/y).
+    its own local origin, so the overlay has to undo exactly that same
+    normalization - and it has to undo the one dungeongen actually performed,
+    not an equivalent-looking one of our own. Its adapter shifts by the
+    *integer* `Dungeon.bounds` of the rooms/passages it was handed; our own
+    continuous-coordinate bbox is a different number (a room wall at raw 17.5
+    or a link starting at raw 1.0 does not have to agree with the rounded
+    cell dungeongen placed it in), and using it put the whole overlay a full
+    cell off - room hit-boxes, markers and all - on any island where the two
+    disagree. `Map.render` then draws at `map_coord + pad - Map.bounds.x`
+    (see calculate_fit_transform, at scale 1 because the canvas is sized to
+    the padded bounds below), so that shift is undone here too.
     """
     from dungeongen.constants import CELL_SIZE
     from dungeongen.graphics.conversions import grid_to_map
 
     if not fits_size_limit(island):
         raise ValueError("island exceeds dungeongen's safe rendering size - caller should fall back")
-
-    isl_minx, isl_miny, _, _ = _island_grid_bbox(island)
 
     dg_dungeon = build_dungeongen_dungeon(island)
     dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
@@ -418,6 +411,7 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
     finally:
         os.unlink(path)
     px_per_grid_unit = SCALE * CELL_SIZE
-    off_x = pad_x - isl_minx * px_per_grid_unit
-    off_y = pad_y - isl_miny * px_per_grid_unit
+    dg_min_x, dg_min_y, _, _ = dg_dungeon.bounds  # the very shift the adapter applied
+    off_x = pad_x - bounds.x - dg_min_x * CELL_SIZE
+    off_y = pad_y - bounds.y - dg_min_y * CELL_SIZE
     return svg, off_x, off_y, px_per_grid_unit, width, height

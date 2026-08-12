@@ -458,33 +458,16 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
                 break
             rounded = _bridge._grid_points_without_collapsing_real_moves(raw)
             r1, r2 = rounded[i1], rounded[i2]
-            seg_dir = (r2[0] - r1[0], r2[1] - r1[1])
-            # r1/r2 are corner points of the *link's* rounded path, not just
-            # of this door's own short slice of it - so one (or both) can be
-            # a dogleg bend where the link turns. dungeongen renders the
-            # inside of a bend as part of the room/corridor wall meeting
-            # there (a corner needs a wall, same as any other corner), so a
-            # marker centered on a 1-cell bend segment ends up straddling
-            # that wall instead of sitting in open floor. When only one end
-            # is a bend, the segment's other end is the start of a straight
-            # run - centering there instead keeps the marker off the corner.
-            def _sign_dir(dx, dy):
-                return ((dx > 0) - (dx < 0), (dy > 0) - (dy < 0))
-
-            seg_sign = _sign_dir(*seg_dir)
-            r1_bend = i1 > 0 and _sign_dir(
-                rounded[i1][0] - rounded[i1 - 1][0], rounded[i1][1] - rounded[i1 - 1][1]
-            ) != seg_sign
-            r2_bend = i2 + 1 < len(rounded) and _sign_dir(
-                rounded[i2 + 1][0] - rounded[i2][0], rounded[i2 + 1][1] - rounded[i2][1]
-            ) != seg_sign
-            if r1_bend and not r2_bend:
-                mid_pt = r2
-            elif r2_bend and not r1_bend:
-                mid_pt = r1
-            else:
-                mid_pt = ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2)
-            return mid_pt, seg_dir
+            # A room's (x, y, width, height) spans grid [x, x+width] - corner
+            # to corner - but a passage *waypoint* (gx, gy) means the whole
+            # cell [gx, gx+1] x [gy, gy+1], so the corridor dungeongen draws
+            # through it is centred on (gx + .5, gy + .5), half a cell off the
+            # lattice point itself. Rooms therefore need no shift here (their
+            # own coordinates already line up) while anything positioned on a
+            # passage does: without it a marker sits on the corridor's own
+            # wall rather than in the middle of the floor.
+            mid_pt = ((r1[0] + r2[0]) / 2 + 0.5, (r1[1] + r2[1]) / 2 + 0.5)
+            return mid_pt, (r2[0] - r1[0], r2[1] - r1[1])
         return mid, direction
 
     for corridor in island["corridors"]:
