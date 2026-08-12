@@ -21,12 +21,51 @@ def _bbox(island):
     return min(xs), max(xs)
 
 
-def test_compute_layout_has_every_room_and_no_negative_bbox_after_translation():
+_NO_SPACE = "Non c'e' spazio sulla mappa"
+
+
+def test_every_room_is_placed_or_accounted_for_and_no_negative_bbox_after_translation():
+    """A room may legitimately not fit: rather than shove it somewhere the
+    roll never put it, layout leaves it off the map (see _walk_room). What
+    must never happen is a room quietly vanishing - every room the generator
+    rolled is either drawn, or says in the log that it couldn't be placed, or
+    sits behind one that said so (its branch is never walked, and the note on
+    the room that failed states the branch stops there).
+
+    The log is the source of truth here, not the map's own dead-end markers:
+    a marker that would land inside a room's floor is cleaned up as noise
+    (_drop_caps_inside_rooms), so it cannot be relied on to account for the
+    room. The note on the node is what the reader actually gets."""
     for seed in range(60):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         layout = compute_layout(dungeon)
-        total_rooms = sum(len(isl["rooms"]) for islands in layout.values() for isl in islands)
-        assert total_rooms == dungeon.room_count
+        placed = {
+            room["id"] for islands in layout.values() for island in islands
+            for room in island["rooms"]
+        }
+        unplaceable = {
+            node.id for node in dungeon.all_nodes()
+            if node.kind == "room" and any(_NO_SPACE in line for line in node.lines)
+        }
+        assert not (placed & unplaceable), "a room cannot be both drawn and reported unplaceable"
+
+        # ids that never reached the map at all must all sit behind an
+        # unplaceable ancestor - nothing disappears without a reason
+        blocked: set[int] = set()
+
+        def mark(node, cut):
+            if node.kind == "room":
+                if cut:
+                    blocked.add(node.id)
+                cut = cut or node.id in unplaceable
+            for child in node.children:
+                mark(child, cut)
+
+        mark(dungeon.root, False)
+        rooms_in_tree = {n.id for n in dungeon.all_nodes() if n.kind == "room"}
+        assert len(rooms_in_tree) == dungeon.room_count
+        assert rooms_in_tree == placed | unplaceable | blocked
+
         for islands in layout.values():
             for island in islands:
                 minx, _ = _bbox(island)

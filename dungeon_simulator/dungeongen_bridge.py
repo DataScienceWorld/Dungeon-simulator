@@ -308,6 +308,14 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             x0, y0 = round(cx - width / 2), round(cy - height / 2)
         dg_id = f"r{room['id']}"
         shape_name = _SHAPE_MAP.get(room["shape"], "RECT")
+        if shape_name == "CIRCLE" and width != height:
+            # dungeongen rejects a circle whose width and height differ (it
+            # raises, and the whole level falls back to the plainer renderer).
+            # A circular room can reach this either by rounding to a slightly
+            # off-square cell count or by the size floor above raising only
+            # one of its sides; squaring it off to the larger side keeps the
+            # room drawn, and only affects dungeongen's own background art.
+            width = height = max(width, height)
         dungeon.add_room(_DGRoom(
             x=x0, y=y0, width=width, height=height,
             shape=getattr(_DGRoomShape, shape_name), z=0, id=dg_id, number=room["id"],

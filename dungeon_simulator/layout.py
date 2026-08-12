@@ -30,14 +30,13 @@ from __future__ import annotations
 
 FT_PER_UNIT = 10.0
 DEFAULT_PASSAGE_WIDTH_FT = 5.0  # a passage's width before any "widens"/"narrows" roll - one full 5ft square
-ROOM_MARGIN = 0.6  # minimum clear gap kept between two rooms' footprints, in grid units
+ROOM_MARGIN = 0.5  # minimum clear gap between two rooms' footprints, in grid units - one
+# full 5ft square of rock. 0.6 was tried and reverted: it is not a round number of squares,
+# and being 1ft wider than the gap a room can actually reach by sliding along its own entry
+# wall, it rejected placements that were otherwise perfectly clear (see _walk_room).
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
 _SLIDE_STEP = 0.5  # 5ft - granularity of the search for a clear spot along the entry wall
 _NOTABLE_SLIDE_UNITS = 2.0  # 20ft - an offset at least this large gets called out in the log
-_PUSH_STEP = 0.5
-_MAX_PUSH_UNITS = 80.0  # last-resort reach once sliding has failed; denser islands
-# (more evenly-explored branches competing for the same space) need the room.
-_NOTABLE_PUSH_UNITS = 2.0  # 20ft - a push at least this large gets called out in the log
 
 _HEADINGS = ["N", "E", "S", "W"]
 _VECTORS = {"N": (0.0, -1.0), "E": (1.0, 0.0), "S": (0.0, 1.0), "W": (-1.0, 0.0)}
@@ -326,6 +325,7 @@ class _Layout:
             step += _SLIDE_STEP
         if limit > 0:
             offsets.extend((limit, -limit))  # doorway right in a corner
+
         def first_clear(entry_x, entry_y):
             for offset in offsets:
                 candidate = _room_aabb(entry_x, entry_y, dx, dy, px, py, w, depth, offset)
@@ -334,15 +334,6 @@ class _Layout:
             return None, None
 
         lateral, footprint = first_clear(x, y)
-        # Only once no position along the wall works does the room get shoved
-        # further along the approach, stretching the corridor behind it. That
-        # used to be the *first* resort, which moved rooms far from where the
-        # roll put them even when clear ground sat right beside the obstacle.
-        pushed = 0.0
-        while lateral is None and pushed < _MAX_PUSH_UNITS:
-            pushed += _PUSH_STEP
-            lateral, footprint = first_clear(x + dx * pushed, y + dy * pushed)
-        x, y = x + dx * pushed, y + dy * pushed
 
         if lateral is None:
             # The room does not fit here in any position along its own entry
@@ -361,14 +352,7 @@ class _Layout:
         # The doorway keeps the position the corridor arrived at; the room is
         # what moved, so nothing before it has to stretch.
         mid_x, mid_y = x + px * lateral, y + py * lateral
-        if pushed >= _NOTABLE_PUSH_UNITS:
-            node.lines.append(
-                f"[Layout] Questa stanza e' stata spostata di circa {round(pushed * FT_PER_UNIT)}ft "
-                "rispetto alla posizione naturale: non c'era spazio libero in nessun punto della sua "
-                "parete d'ingresso, quindi e' stata allontanata lungo il corridoio, che si allunga di "
-                "conseguenza."
-            )
-        elif abs(lateral) >= _NOTABLE_SLIDE_UNITS:
+        if abs(lateral) >= _NOTABLE_SLIDE_UNITS:
             node.lines.append(
                 f"[Layout] L'ingresso di questa stanza si apre a circa {round(abs(lateral) * FT_PER_UNIT)}ft "
                 "dal centro della parete, invece che al centro: la stanza e' stata spostata di lato per non "
@@ -621,9 +605,16 @@ def _drop_caps_inside_rooms(island: dict) -> None:
         xs = [c[0] for c in room["corners"]]
         ys = [c[1] for c in room["corners"]]
         room_rects.append((min(xs), min(ys), max(xs), max(ys)))
+    # Compared with a small tolerance: a cap frequently sits exactly *on* a
+    # room's wall (the corridor arrived there and went no further), and the
+    # island is translated afterwards - adding the same shift to two values
+    # that differ only in their last bits can round them either way, so an
+    # exact comparison here can keep a cap that later reads as inside.
+    eps = 1e-6
     island["caps"] = [
         cap for cap in island["caps"]
-        if not any(rx0 <= cap["x"] <= rx1 and ry0 <= cap["y"] <= ry1 for rx0, ry0, rx1, ry1 in room_rects)
+        if not any(rx0 - eps <= cap["x"] <= rx1 + eps and ry0 - eps <= cap["y"] <= ry1 + eps
+                   for rx0, ry0, rx1, ry1 in room_rects)
     ]
 
 
