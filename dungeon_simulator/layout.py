@@ -432,6 +432,25 @@ class _Layout:
         runs = [{"width": width, "points": [(x, y)]}]
         children = iter(node.children)
         had_child = False
+        moved = False  # has the *current* run actually advanced yet?
+
+        def ensure_min_length():
+            # Several rolls (a door/stairs "in the wall" with no length of
+            # its own, "ends in an open entrance to a room", a resize with
+            # nothing walked before it...) have no move event at all - the
+            # passage would otherwise be a single point, occupying no real
+            # space of its own. A passage is a place, not just a hinge
+            # between two others, so it always advances by at least one 5ft
+            # square before whatever comes next.
+            nonlocal x, y, moved
+            if moved:
+                return
+            dx, dy = _VECTORS[heading]
+            x, y = x + dx * (DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT), y + dy * (DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT)
+            runs[-1]["points"].append((x, y))
+            path.points.append((x, y))
+            moved = True
+
         for event in node.geo.get("events", []):
             etype = event["type"]
             if etype == "move":
@@ -440,21 +459,25 @@ class _Layout:
                 x, y = x + dx * length, y + dy * length
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
+                moved = True
             elif etype == "turn":
                 heading = _rotate(heading, event["dir"])
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
             elif etype == "resize":
+                ensure_min_length()
                 # A rulebook "narrows" roll floors at 5ft and "widens" floors
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
                 width = max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT) / FT_PER_UNIT
                 runs.append({"width": width, "points": [(x, y)]})
+                moved = False
             elif etype == "child":
                 child = next(children, None)
                 if child is None:
                     continue
                 had_child = True
+                ensure_min_length()
                 turn = event.get("turn")
                 child_heading = _rotate(heading, turn)
                 child.geo["approach_heading"] = child_heading
@@ -473,8 +496,10 @@ class _Layout:
                     x, y = ax, ay
         for child in children:  # any child without a matching event (shouldn't normally happen)
             had_child = True
+            ensure_min_length()
             self._enter(child, x, y, heading, level, island, False, path)
         if not had_child:
+            ensure_min_length()
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
         for i, run in enumerate(runs):
             # A "turn" records a point without moving (it just changes heading
