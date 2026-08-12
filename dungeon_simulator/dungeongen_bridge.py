@@ -186,14 +186,23 @@ def _ensure_perpendicular_approach(waypoints, bounds, at_start: bool):
         "north": (wx, wy - 1), "south": (wx, wy + 1),
     }[wall]
     # A single stub can only be spliced in without creating a diagonal
-    # (non-grid) segment if it shares an axis with `neighbor` - which isn't
-    # guaranteed here (that's exactly why _wall_for_approach came back
-    # empty-handed above). A diagonal waypoint is worse than the bug this is
-    # trying to fix: dungeongen's own layout code has no concept of a
-    # non-axis-aligned passage and can hang trying to route one. When a
-    # clean, non-diagonal splice isn't possible, leave the approach as-is.
+    # (non-grid) segment if it shares an axis with `neighbor`. When it
+    # doesn't - typically an exit that immediately turns to run *along* its
+    # own wall (no travel away from the room first) rather than through it -
+    # a second corner point still gets there without ever handing dungeongen
+    # a diagonal: one cell straight out from the wall (the stub), then
+    # straight across to `neighbor`'s own line. Without this, dungeongen
+    # draws the room's wall with its own automatic little alcove to patch
+    # the mismatch, and anything positioned at the door's *real* coordinate
+    # (our own overlay markers) ends up looking like it's sitting inside the
+    # room instead of in the corridor.
     if neighbor[0] != stub[0] and neighbor[1] != stub[1]:
-        return waypoints
+        corner = (stub[0], neighbor[1]) if wall in ("west", "east") else (neighbor[0], stub[1])
+        if at_start:
+            rest = [p for p in waypoints[1:] if p not in (stub, corner)]
+            return _dedupe([waypoints[0], stub, corner, *rest])
+        rest = [p for p in waypoints[:-1] if p not in (stub, corner)]
+        return _dedupe([*rest, corner, stub, waypoints[-1]])
     if at_start:
         rest = [p for p in waypoints[1:] if p != stub]
         return _dedupe([waypoints[0], stub, *rest]) if rest else [waypoints[0], stub]
