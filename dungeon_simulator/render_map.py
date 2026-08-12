@@ -428,13 +428,6 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         # directly - no re-interpolation, and no sensitivity to how tiny the
         # door's own segment is next to the rest of a much longer link.
         #
-        # Also returns the *width* (grid units) the bar should span: a door
-        # dungeongen itself drew a passage through gets the same width that
-        # passage always renders at (a full 1-cell corridor, hardcoded in
-        # dungeongen_bridge) - a shorter, arbitrary bar length would leave a
-        # gap on each side instead of spanning wall to wall like a real door
-        # does. A door with no such passage (its own corridor, drawn by this
-        # same overlay) matches that corridor's own real width instead.
         # A door with no link at all (leads only to a dead end/stairs/edge,
         # like a room's own direct door exit) still often starts exactly on
         # a room's wall - and dungeongen rounds that room's own wall to the
@@ -465,9 +458,34 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
                 break
             rounded = _bridge._grid_points_without_collapsing_real_moves(raw)
             r1, r2 = rounded[i1], rounded[i2]
-            mid_pt = ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2)
-            return mid_pt, (r2[0] - r1[0], r2[1] - r1[1]), 1.0
-        return mid, direction, 0.5
+            seg_dir = (r2[0] - r1[0], r2[1] - r1[1])
+            # r1/r2 are corner points of the *link's* rounded path, not just
+            # of this door's own short slice of it - so one (or both) can be
+            # a dogleg bend where the link turns. dungeongen renders the
+            # inside of a bend as part of the room/corridor wall meeting
+            # there (a corner needs a wall, same as any other corner), so a
+            # marker centered on a 1-cell bend segment ends up straddling
+            # that wall instead of sitting in open floor. When only one end
+            # is a bend, the segment's other end is the start of a straight
+            # run - centering there instead keeps the marker off the corner.
+            def _sign_dir(dx, dy):
+                return ((dx > 0) - (dx < 0), (dy > 0) - (dy < 0))
+
+            seg_sign = _sign_dir(*seg_dir)
+            r1_bend = i1 > 0 and _sign_dir(
+                rounded[i1][0] - rounded[i1 - 1][0], rounded[i1][1] - rounded[i1 - 1][1]
+            ) != seg_sign
+            r2_bend = i2 + 1 < len(rounded) and _sign_dir(
+                rounded[i2 + 1][0] - rounded[i2][0], rounded[i2 + 1][1] - rounded[i2][1]
+            ) != seg_sign
+            if r1_bend and not r2_bend:
+                mid_pt = r2
+            elif r2_bend and not r1_bend:
+                mid_pt = r1
+            else:
+                mid_pt = ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2)
+            return mid_pt, seg_dir
+        return mid, direction
 
     for corridor in island["corridors"]:
         (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
@@ -481,7 +499,7 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     for door in island["doors"]:
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
             continue  # dungeongen already drew a proper door glyph right here
-        (mx_raw, my_raw), (ddx, ddy), width_units = _door_marker_geometry(door)
+        (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
         mx, my = px(mx_raw, my_raw)
         # A line running *along* the corridor's own direction reads as more
         # corridor, not a door - it can even land invisibly on top of a
@@ -489,12 +507,15 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         # past by a room pushed far from its natural spot, sits inside the
         # very corridor dungeongen already rendered). A bar *across* the
         # corridor, in the same rust used for every other door glyph, is what
-        # actually reads as a door - spanning exactly the corridor's own
-        # width (wall to wall), not an arbitrary length that leaves a gap on
-        # each side or overshoots past the walls.
+        # actually reads as a door. dungeongen pads its own passage/room
+        # rendering with wall thickness the corridor's nominal 1-cell width
+        # doesn't account for, so a bar sized to span that full nominal width
+        # overshoots into the wall hatching - a fixed, conservative half-width
+        # (independent of the corridor's nominal width) is what actually
+        # stays inside the rendered floor.
         length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
         perp_x, perp_y = -ddy / length, ddx / length
-        half = width_units * scale / 2
+        half = max(scale * 0.4, 10.0)
         bx1, by1 = mx - perp_x * half, my - perp_y * half
         bx2, by2 = mx + perp_x * half, my + perp_y * half
         title = _html.escape(_full_text(door["lines"]))
