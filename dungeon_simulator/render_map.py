@@ -346,6 +346,31 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     def px(x: float, y: float) -> tuple[float, float]:
         return offset_x + x * scale, offset_y + y * scale
 
+    # The corridors this overlay draws itself share the map with dungeongen's
+    # own art, so they have to sit in the same 10ft cells: drawn from their raw
+    # lattice coordinates they land up to half a cell off the room walls they
+    # start from, off the door markers placed on them, and off the icons that
+    # cap them. Running them through the same cell conversion the passages use
+    # puts all of it in one grid.
+    corridor_cells = {id(c): _bridge._grid_cell_path(c["points"]) for c in island["corridors"]}
+    cell_at_endpoint: dict[tuple, tuple] = {}
+    for corridor in island["corridors"]:
+        cells = corridor_cells[id(corridor)]
+        for raw, cell in (
+            (corridor["points"][0], cells[0]), (corridor["points"][-1], cells[-1]),
+        ):
+            cell_at_endpoint[(round(raw[0], 3), round(raw[1], 3))] = cell
+
+    def px_cell(x: float, y: float) -> tuple[float, float]:
+        """An icon that terminates a corridor belongs at that corridor's own
+        last cell, not at its raw coordinate - the two differ by up to half a
+        cell, which is what leaves a dead-end dot floating beside the corridor
+        it caps."""
+        cell = cell_at_endpoint.get((round(x, 3), round(y, 3)))
+        if cell is None:
+            cell = _bridge._grid_cell_path([(x, y), (x, y)])[0]
+        return px(cell[0] + 0.5, cell[1] + 0.5)
+
     for room in island["rooms"]:
         cxs = [c[0] for c in room["corners"]]
         cys = [c[1] for c in room["corners"]]
@@ -364,7 +389,7 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             parts.append(f'<circle cx="{rx + 16}" cy="{ry + 16}" r="9" fill="{hue}" stroke="#fff" stroke-width="2" />')
 
     for stair in island["stairs"]:
-        sx, sy = px(stair["x"], stair["y"])
+        sx, sy = px_cell(stair["x"], stair["y"])
         up = stair["delta"] < 0
         pts = (f"{sx},{sy - 16} {sx - 13},{sy + 12} {sx + 13},{sy + 12}" if up
                else f"{sx},{sy + 16} {sx - 13},{sy - 12} {sx + 13},{sy - 12}")
@@ -376,7 +401,7 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         )
 
     for portal in island["portals"]:
-        px_, py_ = px(portal["x"], portal["y"])
+        px_, py_ = px_cell(portal["x"], portal["y"])
         parts.append(
             f'<circle cx="{px_}" cy="{py_}" r="16" fill="none" stroke="{_DG_FIXED_HUES["violet"]}" '
             f'stroke-width="3" stroke-dasharray="6 6"><title>Portale - prosegue altrove sulla mappa</title></circle>'
@@ -414,70 +439,51 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         return any((rx, ry) in ((sx, sy), (ex, ey)) for sx, sy, ex, ey in link_endpoints)
 
     def _door_marker_geometry(door):
-        # A door buried inside a link (not at either room's own boundary) is
-        # positioned, in our own data, at continuous 5ft-resolution
-        # coordinates - but dungeongen draws that link at 10ft-cell
-        # resolution, sometimes with an extra stub/corner spliced in for a
-        # clean approach (see _ensure_perpendicular_approach). The door's
-        # raw coordinate can then land on the *wrong leg* of a dogleg
-        # dungeongen's own rounding introduced - still correct by our own
-        # geometry, but visibly off the corridor dungeongen actually drew.
-        # _grid_points_without_collapsing_real_moves returns exactly one
-        # rounded point per input point, in the same order, so the door's
-        # own two raw points can be looked up by index in the rounded path
-        # directly - no re-interpolation, and no sensitivity to how tiny the
-        # door's own segment is next to the rest of a much longer link.
-        #
-        # A door with no link at all (leads only to a dead end/stairs/edge,
-        # like a room's own direct door exit) still often starts exactly on
-        # a room's wall - and dungeongen rounds that room's own wall to the
-        # nearest integer cell independently of this door's raw coordinate.
-        # 17.5 rounds to 18 for the room's wall (and for the matching Exit
-        # archway punched into it, which also goes through _grid()) but the
-        # door's own raw midpoint (17.75) doesn't move to compensate, so the
-        # marker can end up floating a half-cell short of the wall it's
-        # supposed to sit in. Rounding the door's own two points the same
-        # way keeps it anchored to wherever the wall/corridor it actually
-        # touches ends up after rounding, instead of its own raw position.
-        rounded_door = _bridge._grid_points_without_collapsing_real_moves(
-            [(door["x1"], door["y1"]), (door["x2"], door["y2"])]
-        )
-        rd1, rd2 = rounded_door
-        mid = ((rd1[0] + rd2[0]) / 2, (rd1[1] + rd2[1]) / 2)
-        direction = (rd2[0] - rd1[0], rd2[1] - rd1[1])
-        for link in island["links"]:
-            if not any(d["id"] == door["id"] for d in link["doors"]):
-                continue
-            raw = _bridge._dedupe(link["points"])
-            if len(raw) < 2:
-                break
-            try:
-                i1 = raw.index((door["x1"], door["y1"]))
-                i2 = raw.index((door["x2"], door["y2"]), i1)
-            except ValueError:
-                break
-            rounded = _bridge._grid_points_without_collapsing_real_moves(raw)
-            r1, r2 = rounded[i1], rounded[i2]
-            # A room's (x, y, width, height) spans grid [x, x+width] - corner
-            # to corner - but a passage *waypoint* (gx, gy) means the whole
-            # cell [gx, gx+1] x [gy, gy+1], so the corridor dungeongen draws
-            # through it is centred on (gx + .5, gy + .5), half a cell off the
-            # lattice point itself. Rooms therefore need no shift here (their
-            # own coordinates already line up) while anything positioned on a
-            # passage does: without it a marker sits on the corridor's own
-            # wall rather than in the middle of the floor.
-            mid_pt = ((r1[0] + r2[0]) / 2 + 0.5, (r1[1] + r2[1]) / 2 + 0.5)
-            return mid_pt, (r2[0] - r1[0], r2[1] - r1[1])
-        return mid, direction
+        """Where to draw a door's marker, in grid units, plus the direction
+        you travel through it.
+
+        A door is a threshold - the edge you cross - not a stretch of
+        corridor, so the marker belongs on the boundary between the two cells
+        its own segment spans, drawn across the opening. Running the door's
+        own two points through the same cell conversion the surrounding
+        corridor uses (_grid_cell_path) is what keeps the two agreeing: a 5ft
+        door leaving a passage northward spans that passage's cell and the one
+        above it, so the marker lands on the passage's north wall, exactly
+        where the doorway is. Reading the door's own segment rather than
+        looking its endpoints up in the link's cell path also stays correct
+        where the conversion legitimately merges a sub-cell hop into the cell
+        it started in, leaving no separate waypoint to look up.
+
+        A door short enough to stay inside a single cell has no boundary
+        between two cells to sit on; it goes on that cell's leading edge - the
+        side you leave through - which for a room's own doorway is the room
+        wall it is punched into.
+        """
+        p1 = (door["x1"], door["y1"])
+        p2 = (door["x2"], door["y2"])
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        cells = _bridge._grid_cell_path([p1, p2])
+        (cx1, cy1), (cx2, cy2) = cells[0], cells[-1]
+        if cy1 != cy2:  # travels north/south - bar lies along the shared horizontal edge
+            return (cx1 + 0.5, max(cy1, cy2)), (0, cy2 - cy1)
+        if cx1 != cx2:  # travels east/west - shared vertical edge
+            return (max(cx1, cx2), cy1 + 0.5), (cx2 - cx1, 0)
+        if abs(dx) >= abs(dy):
+            return (cx1 + (1 if dx > 0 else 0), cy1 + 0.5), (1 if dx > 0 else -1, 0)
+        return (cx1 + 0.5, cy1 + (1 if dy > 0 else 0)), (0, 1 if dy > 0 else -1)
 
     for corridor in island["corridors"]:
-        (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
-        if _covered(sx, sy):
+        if _covered(corridor["points"][0][0], corridor["points"][0][1]):
             continue  # part of a room-to-room link dungeongen already drew
-        sx_, sy_ = px(sx, sy)
-        ex_, ey_ = px(ex, ey)
         stroke_w = max(corridor.get("width", 0.5) * scale, 3)
-        parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="{stroke_w}" />')
+        route = " ".join(
+            f"{x},{y}" for x, y in
+            (px(cx + 0.5, cy + 0.5) for cx, cy in corridor_cells[id(corridor)])
+        )
+        parts.append(
+            f'<polyline points="{route}" fill="none" stroke="{_DG_INK}" '
+            f'stroke-width="{stroke_w}" stroke-linecap="square" stroke-linejoin="miter" />'
+        )
 
     for door in island["doors"]:
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
@@ -508,7 +514,7 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         )
 
     for cap in island["caps"]:
-        cx_, cy_ = px(cap["x"], cap["y"])
+        cx_, cy_ = px_cell(cap["x"], cap["y"])
         label = "Limite del dungeon" if cap["kind"] == "edge" else "Vicolo cieco"
         parts.append(f'<circle cx="{cx_}" cy="{cy_}" r="8" fill="{_DG_FIXED_HUES["slate"]}"><title>{label}</title></circle>')
         # <title> tooltips don't show on touch devices; label lets the id be matched to the log entry.

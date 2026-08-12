@@ -20,6 +20,7 @@ fall back to the pure-SVG/RoughJS renderer in render_map.py.
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 
@@ -52,7 +53,7 @@ except Exception as exc:  # pragma: no cover - environment dependent
 # 10ft, so a genuine 5ft passage or door still gets its own distinct cell,
 # just one that reads as twice its real length) rather than a bug. The log
 # and the RoughJS renderer, both working in continuous units, still show the
-# real 5ft. See _grid_points_without_collapsing_real_moves for where this is
+# real 5ft. See _grid_cell_path for where this is
 # actually enforced.
 SCALE = 1
 
@@ -88,48 +89,66 @@ def _is_axis_aligned_path(waypoints) -> bool:
     return all(a[0] == b[0] or a[1] == b[1] for a, b in zip(waypoints, waypoints[1:]))
 
 
-def _grid_points_without_collapsing_real_moves(points: list[tuple]) -> list[tuple]:
-    """Round a deduped, continuous-space point list to dungeongen's integer
-    grid without silently erasing a real (if sub-cell) hop.
+def _cell_span(a: float, b: float) -> tuple[int, int]:
+    """The (first, last) cell index a run from `a` to `b` passes through, in
+    travel order. A cell is claimed as soon as the run touches it, so a 5ft
+    hop - half of dungeongen's 10ft cell - still claims one whole cell rather
+    than collapsing to nothing, while a hop that fits inside the cell it
+    started in does not invent a second one."""
+    lo = math.floor(min(a, b) * SCALE)
+    hi = math.ceil(max(a, b) * SCALE) - 1
+    if hi < lo:
+        hi = lo
+    return (lo, hi) if b >= a else (hi, lo)
 
-    dungeongen's cell is 10ft; a real 5ft passage length, door width, banded
-    wall offset or pushback nudge is genuinely smaller than that, and two
-    points a real but sub-cell distance apart can round to the very same
-    cell. A naive round-then-dedupe would then just merge them, and that hop
-    - a whole passage segment, or a door - vanishes from the map instead of
-    reading as the smallest unit this map can show. This is where the
-    module's own stated convention actually happens: whenever rounding would
-    collapse two points that were genuinely distinct before rounding, the
-    later one is nudged one more cell (10ft) in the direction it was already
-    moving, so the hop stays visible - drawn at this map's minimum size
-    rather than not at all. The axis that *didn't* move is always copied
-    forward from the previous output point rather than re-rounded
-    independently - our own geometry only ever moves one axis at a time, and
-    independently rounding the untouched axis on a later point could
-    disagree with an axis that was just nudged, handing dungeongen a
-    diagonal waypoint (it has no concept of one and has been observed to
-    hang trying to route it)."""
-    grid_points = [(_grid(points[0][0]), _grid(points[0][1]))]
-    for i in range(1, len(points)):
-        prev_gx, prev_gy = grid_points[-1]
-        dx_raw = points[i][0] - points[i - 1][0]
-        dy_raw = points[i][1] - points[i - 1][1]
-        if dx_raw and not dy_raw:
-            gx = _grid(points[i][0])
-            if gx == prev_gx:
-                gx = prev_gx + (1 if dx_raw > 0 else -1)
-            grid_points.append((gx, prev_gy))
-        elif dy_raw and not dx_raw:
-            gy = _grid(points[i][1])
-            if gy == prev_gy:
-                gy = prev_gy + (1 if dy_raw > 0 else -1)
-            grid_points.append((prev_gx, gy))
+
+def _grid_cell_path(points: list[tuple]) -> list[tuple]:
+    """Convert a continuous, axis-aligned point list into the cell path
+    dungeongen draws.
+
+    Our own coordinates are *lattice* positions - a corridor is a zero-width
+    line between two points - while a dungeongen waypoint (gx, gy) names a
+    whole cell, [gx, gx+1] x [gy, gy+1]. Converting between them by rounding
+    each point independently conflates the two: a room's east wall at x=14
+    and a 5ft hop east to x=14.5 both round to 14, look like a collapse, and
+    get pushed apart to 14 and 15 - which silently spends *two* cells on a
+    single 5ft step and shifts everything downstream of it a cell sideways.
+
+    Walking spans instead states the module's convention directly: whatever a
+    run touches, it claims, so the 5ft step east out of a wall at x=14 is
+    exactly cell 14 - one 10ft cell, the smallest this map can draw - and a
+    following turn north continues up that same column instead of stepping
+    aside first. The axis that isn't moving is carried forward from the
+    previous cell rather than recomputed, so consecutive waypoints never
+    differ on both axes: dungeongen has no concept of a diagonal waypoint and
+    has been observed to hang trying to route one."""
+    cells: list[tuple] = []
+    cx = cy = None
+    for (ax, ay), (bx, by) in zip(points, points[1:]):
+        dx, dy = bx - ax, by - ay
+        if dx and not dy:
+            start, end = _cell_span(ax, bx)
+            if cx is None:
+                cx, cy = start, math.floor(ay * SCALE)
+                cells.append((cx, cy))
+            cx = end
+        elif dy and not dx:
+            start, end = _cell_span(ay, by)
+            if cx is None:
+                cx, cy = math.floor(ax * SCALE), start
+                cells.append((cx, cy))
+            cy = end
         else:
-            # Diagonal or zero-length move in raw space - shouldn't normally
-            # happen (our own geometry is always axis-aligned) - fall back to
-            # independent rounding rather than guess which axis to correct.
-            grid_points.append((_grid(points[i][0]), _grid(points[i][1])))
-    return grid_points
+            # Diagonal or zero-length in raw space - our own geometry only
+            # ever moves one axis at a time, so this shouldn't happen; take
+            # the endpoint's own cell rather than guess which axis to fix.
+            if cx is None:
+                cells.append((math.floor(ax * SCALE), math.floor(ay * SCALE)))
+            cx, cy = math.floor(bx * SCALE), math.floor(by * SCALE)
+        cells.append((cx, cy))
+    if not cells:
+        cells = [(math.floor(points[0][0] * SCALE), math.floor(points[0][1] * SCALE))]
+    return _dedupe(cells)
 
 
 def _door_type_at(link: dict, raw_point: tuple) -> "_DGDoorType":
@@ -158,26 +177,29 @@ def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:
     return "south" if dy > 0 else "north"
 
 
-def _wall_for_approach(point, neighbor, bounds) -> str | None:
-    """Which wall of `bounds` `point` is approached through, going by the
-    *direction of travel* from `neighbor` rather than blind coordinate
-    matching - a point can sit exactly on two bbox edges at once (e.g. a
-    small room's bounds were widened by the size floor above and now
-    coincide, on one axis, with the corridor's own coordinate), and matching
-    by coordinate alone can pick the wrong one. Returns None - "don't know,
-    leave it alone" - for anything that isn't a clean, unambiguous case,
-    rather than guess: a wrong guess here previously produced a self-crossing
-    waypoint list that made dungeongen's own layout code hang."""
+def _wall_for_approach(point, bounds) -> str | None:
+    """Which wall of `bounds` the passage cell `point` enters through, or None
+    if that cell doesn't sit against the room at all.
+
+    `bounds` are lattice edges, so the room *occupies* cells x0..x1-1 by
+    y0..y1-1 and the cells touching it are exactly one step outside that
+    block. A passage cell qualifies when it is that one step out and lines up
+    with the room's own extent on the other axis; the four cases are mutually
+    exclusive (a diagonal cell satisfies neither the row nor the column test),
+    so there's no ambiguity to resolve and no need to consult the direction of
+    travel. Notably a cell alongside the room counts as a proper approach even
+    when the corridor then runs parallel to that wall - the door still opens
+    straight through it, and forcing a detour there is what used to push a
+    corridor a cell away from the room it was leaving."""
     wx, wy = point
-    nx, ny = neighbor
     x0, y0, x1, y1 = bounds
-    if nx == wx and ny != wy:
-        if wy == y0:
+    if x0 <= wx <= x1 - 1:
+        if wy == y0 - 1:
             return "north"
         if wy == y1:
             return "south"
-    elif ny == wy and nx != wx:
-        if wx == x0:
+    if y0 <= wy <= y1 - 1:
+        if wx == x0 - 1:
             return "west"
         if wx == x1:
             return "east"
@@ -185,34 +207,34 @@ def _wall_for_approach(point, neighbor, bounds) -> str | None:
 
 
 def _ensure_perpendicular_approach(waypoints, bounds, at_start: bool):
-    """layout.py's geometry is in continuous grid units (frequently landing on
-    half units), but dungeongen wants integer cells - rounding two nearby
-    points can collapse them onto the same integer, or onto the room wall's
-    own coordinate. Either way the corridor ends up running parallel to the
-    wall instead of meeting it head-on, and dungeongen silently fails to
-    place a door there (the room then looks unconnected). Detect that and
-    splice in a one-cell perpendicular stub so the last hop is always a
-    proper, wall-normal approach."""
+    """A passage has to start on a cell that actually touches the room it
+    claims to leave, or dungeongen silently places no door and the room reads
+    as unconnected. `_grid_cell_path` normally lands on one already; when the
+    conversion leaves the first cell short of the room (a link whose end was
+    clipped, or a room the size floor grew after the fact), splice in a stub
+    cell against the wall it lines up with so the approach is restored."""
     point = waypoints[0] if at_start else waypoints[-1]
     neighbor = waypoints[1] if at_start else waypoints[-2]
-    wall = _wall_for_approach(point, neighbor, bounds)
+    wall = _wall_for_approach(point, bounds)
     if wall is not None:
-        return waypoints  # already a clean, perpendicular approach
-    # Not a recognizable perpendicular approach - but only patch it up when
-    # `point` unambiguously sits on exactly one wall; anything else (a
-    # corner, or floating off every wall entirely) is left untouched rather
-    # than risked.
+        return waypoints  # already sits against the room
+    # Not touching the room - only patch it up when `point` lines up with
+    # exactly one wall; anything else (diagonally off a corner, or floating
+    # away from the room entirely) is left untouched rather than risked.
     wx, wy = point
     x0, y0, x1, y1 = bounds
     on_walls = [w for w, hit in (
-        ("west", wx == x0), ("east", wx == x1), ("north", wy == y0), ("south", wy == y1),
+        ("west", wx < x0 - 1 and y0 <= wy <= y1 - 1),
+        ("east", wx > x1 and y0 <= wy <= y1 - 1),
+        ("north", wy < y0 - 1 and x0 <= wx <= x1 - 1),
+        ("south", wy > y1 and x0 <= wx <= x1 - 1),
     ) if hit]
     if len(on_walls) != 1:
         return waypoints
     wall = on_walls[0]
     stub = {
-        "west": (wx - 1, wy), "east": (wx + 1, wy),
-        "north": (wx, wy - 1), "south": (wx, wy + 1),
+        "west": (x0 - 1, wy), "east": (x1, wy),
+        "north": (wx, y0 - 1), "south": (wx, y1),
     }[wall]
     # A single stub can only be spliced in without creating a diagonal
     # (non-grid) segment if it shares an axis with `neighbor`. When it
@@ -284,7 +306,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         points = _dedupe(link["points"])
         if len(points) < 2:
             continue
-        waypoints = _dedupe(_grid_points_without_collapsing_real_moves(points))
+        waypoints = _grid_cell_path(points)
         if len(waypoints) < 2:
             continue
         waypoints = _ensure_perpendicular_approach(waypoints, from_info[1:], at_start=True)
@@ -294,7 +316,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # has no concept of one and has been observed to hang trying to
             # route it, rather than raising a catchable error. Fall back to
             # the pre-fixup, still axis-aligned waypoints instead.
-            waypoints = _dedupe(_grid_points_without_collapsing_real_moves(points))
+            waypoints = _grid_cell_path(points)
             if len(waypoints) < 2:
                 continue
 
