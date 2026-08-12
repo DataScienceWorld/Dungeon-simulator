@@ -361,6 +361,15 @@ class _Layout:
                 offset = _wall_offset(child.id, depth)
                 eh = _rotate(heading, "left")
                 ex, ey = x + dx * (depth / 2 + offset) - px * w / 2, y + dy * (depth / 2 + offset) - py * w / 2
+            # "left"/"right" in the log are relative to the direction of
+            # travel (matching the rulebook's own narrative convention -
+            # tables say things like "a side passage leads off to the
+            # left"), which is *not* the same as left/right on a fixed,
+            # north-up map once a room isn't itself facing north. Recording
+            # the actual compass heading here lets the log clarify which way
+            # an exit really points on the map, instead of just repeating a
+            # direction that can visually be on the opposite side.
+            child.geo["approach_heading"] = eh
             self._enter(child, ex, ey, eh, level, island, False, _Path(node.id, (ex, ey)))
         return x, y
 
@@ -389,6 +398,7 @@ class _Layout:
                 had_child = True
                 turn = event.get("turn")
                 child_heading = _rotate(heading, turn)
+                child.geo["approach_heading"] = child_heading
                 child_path = path.branch((x, y)) if turn is not None else path
                 ax, ay = self._enter(child, x, y, child_heading, level, island,
                                       bool(event.get("portal")), child_path)

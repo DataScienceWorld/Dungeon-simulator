@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html as _html
 
+from .layout import compute_layout
 from .models import Dungeon, Node
 from .render_map import render_map_section
 
@@ -30,19 +31,36 @@ _KIND_META = {
 
 _TURN_LABELS = {"left": "svolta a sinistra", "right": "svolta a destra", None: "si continua dritto"}
 _SLOT_LABELS = {"forward": "uscita frontale", "right": "uscita a destra", "left": "uscita a sinistra"}
+_HEADING_LABELS = {"N": "verso nord sulla mappa", "E": "verso est sulla mappa",
+                    "S": "verso sud sulla mappa", "W": "verso ovest sulla mappa"}
 
 
 def _child_exit_labels(node: Node) -> list[str | None]:
     """One label per entry in node.children, describing which exit/turn led
     there - a room's own exit_slots for a room, or a passage's "child"
     events (in the same order children were appended) for a passage. Both
-    kinds guarantee count and order match 1:1 with node.children."""
+    kinds guarantee count and order match 1:1 with node.children.
+
+    "Sinistra"/"destra" are relative to the direction of travel (matching
+    the rulebook's own narrative language - tables say things like "a side
+    passage leads off to the left"), which is *not* the same as left/right
+    on the map once the party isn't facing north - so wherever layout.py
+    has recorded which way an exit actually points (child.geo
+    ["approach_heading"], set once the map is computed), that absolute
+    compass direction is appended so the two views don't seem to disagree.
+    """
     if node.kind == "room":
-        return [_SLOT_LABELS.get(slot, slot) for slot in node.geo.get("exit_slots", [])]
-    if node.kind == "passage":
+        base = [_SLOT_LABELS.get(slot, slot) for slot in node.geo.get("exit_slots", [])]
+    elif node.kind == "passage":
         turns = [event.get("turn") for event in node.geo.get("events", []) if event.get("type") == "child"]
-        return [_TURN_LABELS.get(turn, turn) for turn in turns]
-    return [None] * len(node.children)
+        base = [_TURN_LABELS.get(turn, turn) for turn in turns]
+    else:
+        return [None] * len(node.children)
+    labels = []
+    for child, label in zip(node.children, base):
+        compass = _HEADING_LABELS.get(child.geo.get("approach_heading"))
+        labels.append(f"{label}, {compass}" if compass else label)
+    return labels
 
 
 def render_text(dungeon: Dungeon) -> str:
@@ -56,6 +74,11 @@ def render_text(dungeon: Dungeon) -> str:
     out.append(f"Rooms generated: {dungeon.room_count} / target {dungeon.target_rooms}")
     out.append(f"Total nodes: {dungeon.node_count}")
     out.append("")
+    # Populates child.geo["approach_heading"] on every node (see layout.py's
+    # _walk_room/_walk_passage) so _child_exit_labels can state which way an
+    # exit actually points on the map, not just "left"/"right" relative to
+    # the direction of travel.
+    compute_layout(dungeon)
     _render_node(dungeon.root, depth=0, out=out)
     return "\n".join(out)
 
@@ -313,8 +336,11 @@ def render_html_body(dungeon: Dungeon) -> str:
 
     Suitable for embedding directly in a page body, e.g. via Artifact.
     """
-    tree_html = _node_to_html(dungeon.root)
+    # render_map_section() computes the layout as a side effect, populating
+    # child.geo["approach_heading"] on every node - must run before building
+    # the log tree so _child_exit_labels can see it.
     map_html = render_map_section(dungeon)
+    tree_html = _node_to_html(dungeon.root)
     return f"""{_HTML_STYLE}
 <div class="dg-app">
   <div class="dg-header">
