@@ -435,8 +435,23 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         # gap on each side instead of spanning wall to wall like a real door
         # does. A door with no such passage (its own corridor, drawn by this
         # same overlay) matches that corridor's own real width instead.
-        mid = ((door["x1"] + door["x2"]) / 2, (door["y1"] + door["y2"]) / 2)
-        direction = (door["x2"] - door["x1"], door["y2"] - door["y1"])
+        # A door with no link at all (leads only to a dead end/stairs/edge,
+        # like a room's own direct door exit) still often starts exactly on
+        # a room's wall - and dungeongen rounds that room's own wall to the
+        # nearest integer cell independently of this door's raw coordinate.
+        # 17.5 rounds to 18 for the room's wall (and for the matching Exit
+        # archway punched into it, which also goes through _grid()) but the
+        # door's own raw midpoint (17.75) doesn't move to compensate, so the
+        # marker can end up floating a half-cell short of the wall it's
+        # supposed to sit in. Rounding the door's own two points the same
+        # way keeps it anchored to wherever the wall/corridor it actually
+        # touches ends up after rounding, instead of its own raw position.
+        rounded_door = _bridge._grid_points_without_collapsing_real_moves(
+            [(door["x1"], door["y1"]), (door["x2"], door["y2"])]
+        )
+        rd1, rd2 = rounded_door
+        mid = ((rd1[0] + rd2[0]) / 2, (rd1[1] + rd2[1]) / 2)
+        direction = (rd2[0] - rd1[0], rd2[1] - rd1[1])
         for link in island["links"]:
             if not any(d["id"] == door["id"] for d in link["doors"]):
                 continue
