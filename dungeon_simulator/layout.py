@@ -52,6 +52,29 @@ def _rotate(heading: str, direction: str | None) -> str:
     return heading
 
 
+_WALL_INSET_FRAC = 0.2  # keep an exit within the middle 60% of the wall it's on,
+# away from the corners
+
+
+def _pseudo_unit(n: int) -> float:
+    """Deterministic pseudo-random value in [0, 1) derived from an integer id.
+    Where an exit sits along the wall it's on is cosmetic layout jitter, not
+    a rulebook roll, so it doesn't need to come from the shared dice stream -
+    but it must still be stable across re-renders of the same dungeon, hence
+    a hash of the (stable, unique) node id rather than a fresh random draw."""
+    return ((n * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF
+
+
+def _wall_offset(node_id: int, wall_length: float) -> float:
+    """A deterministic offset from the center of a wall of the given length,
+    keeping _WALL_INSET_FRAC clear at each end. Two exits on the same wall
+    (e.g. a room rolling two "forward" exits) get different offsets because
+    they're keyed on different child node ids - previously every exit on a
+    given side landed on the exact same dead-center point."""
+    usable = max(0.0, wall_length * (1 - 2 * _WALL_INSET_FRAC))
+    return (_pseudo_unit(node_id) - 0.5) * usable
+
+
 def _new_island() -> dict:
     return {
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
@@ -261,13 +284,28 @@ class _Layout:
 
         occupied = island["_occupied"]
         pushed = 0.0
+        placed = False
         for _ in range(_MAX_PUSH_ATTEMPTS):
             candidate = _room_aabb(x + dx * pushed, y + dy * pushed, dx, dy, px, py, w, depth)
             if not any(_overlaps(candidate, other, ROOM_MARGIN) for other in occupied):
+                placed = True
                 break
             pushed += _PUSH_STEP
-        else:
-            candidate = _room_aabb(x + dx * pushed, y + dy * pushed, dx, dy, px, py, w, depth)
+
+        if not placed:
+            # No amount of pushing along the approach direction found clear
+            # ground - rather than accept an overlapping room (a map
+            # correctness violation), drop it and stop this branch here, as
+            # if it had dead-ended. The room's own roll/contents/children
+            # are untouched in the tree - only the map (and the log, via
+            # this note) reflect the failed placement.
+            node.lines.append(
+                "[Layout] Non c'e' spazio sulla mappa per posizionare questa stanza senza "
+                "sovrapposizioni - il ramo si interrompe qui (il contenuto resta comunque nel registro)."
+            )
+            island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
+            return x, y
+
         x, y = x + dx * pushed, y + dy * pushed
 
         if path.room_from is not None and path.points:
@@ -308,14 +346,21 @@ class _Layout:
 
         slots = node.geo.get("exit_slots", [])
         for child, slot in zip(node.children, slots):
+            # An exit's position along its wall is randomized (deterministically,
+            # keyed on the child's id) rather than fixed dead-center - two exits
+            # rolled onto the same side (e.g. a room with two "forward" slots)
+            # would otherwise land on the exact same point and look like one.
             if slot == "forward":
-                ex, ey, eh = far_x, far_y, heading
+                offset = _wall_offset(child.id, w)
+                ex, ey, eh = far_x + px * offset, far_y + py * offset, heading
             elif slot == "right":
+                offset = _wall_offset(child.id, depth)
                 eh = _rotate(heading, "right")
-                ex, ey = x + dx * depth / 2 + px * w / 2, y + dy * depth / 2 + py * w / 2
+                ex, ey = x + dx * (depth / 2 + offset) + px * w / 2, y + dy * (depth / 2 + offset) + py * w / 2
             else:  # left
+                offset = _wall_offset(child.id, depth)
                 eh = _rotate(heading, "left")
-                ex, ey = x + dx * depth / 2 - px * w / 2, y + dy * depth / 2 - py * w / 2
+                ex, ey = x + dx * (depth / 2 + offset) - px * w / 2, y + dy * (depth / 2 + offset) - py * w / 2
             self._enter(child, ex, ey, eh, level, island, False, _Path(node.id, (ex, ey)))
         return x, y
 
