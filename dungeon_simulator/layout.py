@@ -31,13 +31,13 @@ from __future__ import annotations
 FT_PER_UNIT = 10.0
 DEFAULT_PASSAGE_WIDTH_FT = 5.0  # a passage's width before any "widens"/"narrows" roll - one full 5ft square
 ROOM_MARGIN = 0.6  # minimum clear gap kept between two rooms' footprints, in grid units
-_PUSH_STEP = 0.5
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
-_MAX_PUSH_ATTEMPTS = 160  # max push reach of _PUSH_STEP*_MAX_PUSH_ATTEMPTS = 80 grid units;
-# denser islands (more evenly-explored branches competing for the same
-# space) need more room to find genuinely clear ground - 80 attempts (40
-# units) was observed to still leave rooms overlapping on some seeds.
-_NOTABLE_PUSH_UNITS = 2.0  # 20ft - a push at least this large gets called out in the log (see _walk_room)
+_SLIDE_STEP = 0.5  # 5ft - granularity of the search for a clear spot along the entry wall
+_NOTABLE_SLIDE_UNITS = 2.0  # 20ft - an offset at least this large gets called out in the log
+_PUSH_STEP = 0.5
+_MAX_PUSH_UNITS = 80.0  # last-resort reach once sliding has failed; denser islands
+# (more evenly-explored branches competing for the same space) need the room.
+_NOTABLE_PUSH_UNITS = 2.0  # 20ft - a push at least this large gets called out in the log
 
 _HEADINGS = ["N", "E", "S", "W"]
 _VECTORS = {"N": (0.0, -1.0), "E": (1.0, 0.0), "S": (0.0, 1.0), "W": (-1.0, 0.0)}
@@ -90,11 +90,17 @@ def _new_island() -> dict:
     }
 
 
-def _room_aabb(entry_x, entry_y, dx, dy, px, py, w, depth):
-    far_x, far_y = entry_x + dx * depth, entry_y + dy * depth
+def _room_aabb(entry_x, entry_y, dx, dy, px, py, w, depth, lateral=0.0):
+    """The room's footprint when the doorway sits `lateral` units off the
+    middle of the wall it's punched into. The doorway itself stays at
+    (entry_x, entry_y); the room slides sideways around it, which is what
+    lets a blocked room find clear ground beside an obstacle without the
+    corridor leading to it having to stretch."""
+    mid_x, mid_y = entry_x + px * lateral, entry_y + py * lateral
+    far_x, far_y = mid_x + dx * depth, mid_y + dy * depth
     corners = [
-        (entry_x - px * w / 2, entry_y - py * w / 2),
-        (entry_x + px * w / 2, entry_y + py * w / 2),
+        (mid_x - px * w / 2, mid_y - py * w / 2),
+        (mid_x + px * w / 2, mid_y + py * w / 2),
         (far_x + px * w / 2, far_y + py * w / 2),
         (far_x - px * w / 2, far_y - py * w / 2),
     ]
@@ -304,22 +310,47 @@ class _Layout:
         px, py = -dy, dx  # perpendicular
 
         occupied = island["_occupied"]
-        pushed = 0.0
-        placed = False
-        for _ in range(_MAX_PUSH_ATTEMPTS):
-            candidate = _room_aabb(x + dx * pushed, y + dy * pushed, dx, dy, px, py, w, depth)
-            if not any(_overlaps(candidate, other, ROOM_MARGIN) for other in occupied):
-                placed = True
-                break
-            pushed += _PUSH_STEP
+        # A room is placed where the roll actually put it - at the end of the
+        # corridor that leads to it - and the only freedom taken is *where
+        # along its own entry wall* that corridor arrives. Offset 0 is the
+        # natural result (doorway in the middle of the wall); sliding towards
+        # either corner moves the room sideways while the doorway stays put,
+        # so a room blocked on one side can sit beside the obstacle instead.
+        # The doorway can travel as far as the wall's own corners, no further
+        # - past that it would no longer be on the wall at all.
+        limit = w / 2
+        offsets = [0.0]
+        step = _SLIDE_STEP
+        while step < limit:
+            offsets.extend((step, -step))
+            step += _SLIDE_STEP
+        if limit > 0:
+            offsets.extend((limit, -limit))  # doorway right in a corner
+        def first_clear(entry_x, entry_y):
+            for offset in offsets:
+                candidate = _room_aabb(entry_x, entry_y, dx, dy, px, py, w, depth, offset)
+                if not any(_overlaps(candidate, other, ROOM_MARGIN) for other in occupied):
+                    return offset, candidate
+            return None, None
 
-        if not placed:
-            # No amount of pushing along the approach direction found clear
-            # ground - rather than accept an overlapping room (a map
-            # correctness violation), drop it and stop this branch here, as
-            # if it had dead-ended. The room's own roll/contents/children
-            # are untouched in the tree - only the map (and the log, via
-            # this note) reflect the failed placement.
+        lateral, footprint = first_clear(x, y)
+        # Only once no position along the wall works does the room get shoved
+        # further along the approach, stretching the corridor behind it. That
+        # used to be the *first* resort, which moved rooms far from where the
+        # roll put them even when clear ground sat right beside the obstacle.
+        pushed = 0.0
+        while lateral is None and pushed < _MAX_PUSH_UNITS:
+            pushed += _PUSH_STEP
+            lateral, footprint = first_clear(x + dx * pushed, y + dy * pushed)
+        x, y = x + dx * pushed, y + dy * pushed
+
+        if lateral is None:
+            # The room does not fit here in any position along its own entry
+            # wall. Rather than shove it away down the corridor - which put it
+            # somewhere the roll never said, and stretched the passage to
+            # reach - it simply isn't placed, and the branch stops here as if
+            # it had dead-ended. The room's own roll, contents and children
+            # stay in the tree and in the log; only the map loses it.
             node.lines.append(
                 "[Layout] Non c'e' spazio sulla mappa per posizionare questa stanza senza "
                 "sovrapposizioni - il ramo si interrompe qui (il contenuto resta comunque nel registro)."
@@ -327,17 +358,21 @@ class _Layout:
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
             return x, y
 
-        x, y = x + dx * pushed, y + dy * pushed
+        # The doorway keeps the position the corridor arrived at; the room is
+        # what moved, so nothing before it has to stretch.
+        mid_x, mid_y = x + px * lateral, y + py * lateral
         if pushed >= _NOTABLE_PUSH_UNITS:
-            # A small nudge to clear a neighbour is routine and not worth
-            # mentioning, but a large one means the room ended up far from
-            # where the roll "naturally" placed it - the connecting door or
-            # passage stretches to match, which reads as an oddly long
-            # corridor on the map unless the log explains why.
             node.lines.append(
                 f"[Layout] Questa stanza e' stata spostata di circa {round(pushed * FT_PER_UNIT)}ft "
-                "rispetto alla posizione naturale, per non sovrapporsi ad altre stanze gia' presenti "
-                "sulla mappa - il corridoio/porta che la precede si allunga di conseguenza."
+                "rispetto alla posizione naturale: non c'era spazio libero in nessun punto della sua "
+                "parete d'ingresso, quindi e' stata allontanata lungo il corridoio, che si allunga di "
+                "conseguenza."
+            )
+        elif abs(lateral) >= _NOTABLE_SLIDE_UNITS:
+            node.lines.append(
+                f"[Layout] L'ingresso di questa stanza si apre a circa {round(abs(lateral) * FT_PER_UNIT)}ft "
+                "dal centro della parete, invece che al centro: la stanza e' stata spostata di lato per non "
+                "sovrapporsi ad altre gia' presenti sulla mappa, mantenendo pero' la posizione della porta."
             )
 
         if path.room_from is not None and path.points:
@@ -355,12 +390,15 @@ class _Layout:
                 # occasion it doesn't clear everything.
                 path.points.extend(_detour_around(prev, (x, y), blockers))
 
-        occupied.append(candidate)
+        occupied.append(footprint)
 
-        far_x, far_y = x + dx * depth, y + dy * depth
+        # Everything below is the room's own geometry, so it hangs off the
+        # middle of its entry wall (mid_x, mid_y) rather than off the doorway
+        # - the two coincide only when the room didn't have to slide.
+        far_x, far_y = mid_x + dx * depth, mid_y + dy * depth
         corners = [
-            (x - px * w / 2, y - py * w / 2),
-            (x + px * w / 2, y + py * w / 2),
+            (mid_x - px * w / 2, mid_y - py * w / 2),
+            (mid_x + px * w / 2, mid_y + py * w / 2),
             (far_x + px * w / 2, far_y + py * w / 2),
             (far_x - px * w / 2, far_y - py * w / 2),
         ]
@@ -399,11 +437,13 @@ class _Layout:
             elif slot == "right":
                 offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "right")
-                ex, ey = x + dx * (depth / 2 + offset) + px * w / 2, y + dy * (depth / 2 + offset) + py * w / 2
+                ex = mid_x + dx * (depth / 2 + offset) + px * w / 2
+                ey = mid_y + dy * (depth / 2 + offset) + py * w / 2
             else:  # left
                 offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "left")
-                ex, ey = x + dx * (depth / 2 + offset) - px * w / 2, y + dy * (depth / 2 + offset) - py * w / 2
+                ex = mid_x + dx * (depth / 2 + offset) - px * w / 2
+                ey = mid_y + dy * (depth / 2 + offset) - py * w / 2
             # "left"/"right" in the log are relative to the direction of
             # travel (matching the rulebook's own narrative convention -
             # tables say things like "a side passage leads off to the
