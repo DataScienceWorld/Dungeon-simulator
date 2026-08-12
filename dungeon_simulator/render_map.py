@@ -413,6 +413,38 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         rx, ry = round(x, 3), round(y, 3)
         return any((rx, ry) in ((sx, sy), (ex, ey)) for sx, sy, ex, ey in link_endpoints)
 
+    def _door_marker_geometry(door):
+        # A door buried inside a link (not at either room's own boundary) is
+        # positioned, in our own data, at continuous 5ft-resolution
+        # coordinates - but dungeongen draws that link at 10ft-cell
+        # resolution, sometimes with an extra stub/corner spliced in for a
+        # clean approach (see _ensure_perpendicular_approach). The door's
+        # raw coordinate can then land on the *wrong leg* of a dogleg
+        # dungeongen's own rounding introduced - still correct by our own
+        # geometry, but visibly off the corridor dungeongen actually drew.
+        # _grid_points_without_collapsing_real_moves returns exactly one
+        # rounded point per input point, in the same order, so the door's
+        # own two raw points can be looked up by index in the rounded path
+        # directly - no re-interpolation, and no sensitivity to how tiny the
+        # door's own segment is next to the rest of a much longer link.
+        mid = ((door["x1"] + door["x2"]) / 2, (door["y1"] + door["y2"]) / 2)
+        direction = (door["x2"] - door["x1"], door["y2"] - door["y1"])
+        for link in island["links"]:
+            if not any(d["id"] == door["id"] for d in link["doors"]):
+                continue
+            raw = _bridge._dedupe(link["points"])
+            if len(raw) < 2:
+                break
+            try:
+                i1 = raw.index((door["x1"], door["y1"]))
+                i2 = raw.index((door["x2"], door["y2"]), i1)
+            except ValueError:
+                break
+            rounded = _bridge._grid_points_without_collapsing_real_moves(raw)
+            r1, r2 = rounded[i1], rounded[i2]
+            return ((r1[0] + r2[0]) / 2, (r1[1] + r2[1]) / 2), (r2[0] - r1[0], r2[1] - r1[1])
+        return mid, direction
+
     for corridor in island["corridors"]:
         (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
         if _covered(sx, sy):
@@ -425,8 +457,8 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     for door in island["doors"]:
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
             continue  # dungeongen already drew a proper door glyph right here
-        x1_, y1_ = px(door["x1"], door["y1"])
-        x2_, y2_ = px(door["x2"], door["y2"])
+        (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
+        mx, my = px(mx_raw, my_raw)
         # A line running *along* the corridor's own direction reads as more
         # corridor, not a door - it can even land invisibly on top of a
         # corridor already drawn there (a door buried mid-link, stretched
@@ -434,8 +466,6 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         # very corridor dungeongen already rendered). A short bar *across*
         # the corridor, in the same rust used for every other door glyph, is
         # what actually reads as a door.
-        mx, my = (x1_ + x2_) / 2, (y1_ + y2_) / 2
-        ddx, ddy = x2_ - x1_, y2_ - y1_
         length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
         perp_x, perp_y = -ddy / length, ddx / length
         half = max(scale * 0.4, 10.0)
