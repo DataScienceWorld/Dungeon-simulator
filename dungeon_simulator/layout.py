@@ -37,6 +37,7 @@ _MAX_PUSH_ATTEMPTS = 160  # max push reach of _PUSH_STEP*_MAX_PUSH_ATTEMPTS = 80
 # denser islands (more evenly-explored branches competing for the same
 # space) need more room to find genuinely clear ground - 80 attempts (40
 # units) was observed to still leave rooms overlapping on some seeds.
+_NOTABLE_PUSH_UNITS = 2.0  # 20ft - a push at least this large gets called out in the log (see _walk_room)
 
 _HEADINGS = ["N", "E", "S", "W"]
 _VECTORS = {"N": (0.0, -1.0), "E": (1.0, 0.0), "S": (0.0, 1.0), "W": (-1.0, 0.0)}
@@ -254,7 +255,17 @@ class _Layout:
             path.doors.append(door)
             for child in node.children:
                 ax, ay = self._enter(child, nx, ny, heading, level, island, False, path)
-                door["x2"], door["y2"] = ax, ay
+                if (ax, ay) != (nx, ny):
+                    # Whatever's beyond (usually a room) had to be pushed
+                    # clear of something else already on the map. Stretching
+                    # the door's own glyph to bridge that gap would draw one
+                    # absurdly long "door" - a door is a single fixture, not
+                    # a corridor - so the gap gets its own plain connecting
+                    # corridor instead, and the door stays its real size.
+                    island["corridors"].append({
+                        "id": f"stretch{node.id}", "points": [(nx, ny), (ax, ay)],
+                        "width": DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT, "lines": [],
+                    })
             return x, y
         if kind == "stairs":
             length = node.geo.get("length_ft", 10) / FT_PER_UNIT
@@ -317,6 +328,17 @@ class _Layout:
             return x, y
 
         x, y = x + dx * pushed, y + dy * pushed
+        if pushed >= _NOTABLE_PUSH_UNITS:
+            # A small nudge to clear a neighbour is routine and not worth
+            # mentioning, but a large one means the room ended up far from
+            # where the roll "naturally" placed it - the connecting door or
+            # passage stretches to match, which reads as an oddly long
+            # corridor on the map unless the log explains why.
+            node.lines.append(
+                f"[Layout] Questa stanza e' stata spostata di circa {round(pushed * FT_PER_UNIT)}ft "
+                "rispetto alla posizione naturale, per non sovrapporsi ad altre stanze gia' presenti "
+                "sulla mappa - il corridoio/porta che la precede si allunga di conseguenza."
+            )
 
         if path.room_from is not None and path.points:
             prev = path.points[-1]
