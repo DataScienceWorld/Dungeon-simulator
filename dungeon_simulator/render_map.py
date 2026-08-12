@@ -394,9 +394,24 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     link_points = {
         (round(px_, 3), round(py_, 3)) for link in island["links"] for px_, py_ in link["points"]
     }
+    # dungeongen draws an actual door glyph only at a link's own two
+    # endpoints (where a Passage meets a Room) - never at a real door
+    # buried partway along it. A room pushed far from its natural spot (see
+    # _walk_room) stretches the link well past that door's own position, so
+    # the door itself would otherwise get no visual mark at all: covered by
+    # a link, yet nowhere dungeongen actually draws it.
+    link_endpoints = {
+        (round(link["points"][0][0], 3), round(link["points"][0][1], 3),
+         round(link["points"][-1][0], 3), round(link["points"][-1][1], 3))
+        for link in island["links"]
+    }
 
     def _covered(x: float, y: float) -> bool:
         return (round(x, 3), round(y, 3)) in link_points
+
+    def _door_drawn_by_dungeongen(x: float, y: float) -> bool:
+        rx, ry = round(x, 3), round(y, 3)
+        return any((rx, ry) in ((sx, sy), (ex, ey)) for sx, sy, ex, ey in link_endpoints)
 
     for corridor in island["corridors"]:
         (sx, sy), (ex, ey) = corridor["points"][0], corridor["points"][-1]
@@ -408,13 +423,27 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="{stroke_w}" />')
 
     for door in island["doors"]:
-        if _covered(door["x1"], door["y1"]):
-            continue  # part of a room-to-room link - dungeongen already drew a proper door glyph
+        if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door["x1"], door["y1"]):
+            continue  # dungeongen already drew a proper door glyph right here
         x1_, y1_ = px(door["x1"], door["y1"])
         x2_, y2_ = px(door["x2"], door["y2"])
+        # A line running *along* the corridor's own direction reads as more
+        # corridor, not a door - it can even land invisibly on top of a
+        # corridor already drawn there (a door buried mid-link, stretched
+        # past by a room pushed far from its natural spot, sits inside the
+        # very corridor dungeongen already rendered). A short bar *across*
+        # the corridor, in the same rust used for every other door glyph, is
+        # what actually reads as a door.
+        mx, my = (x1_ + x2_) / 2, (y1_ + y2_) / 2
+        ddx, ddy = x2_ - x1_, y2_ - y1_
+        length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
+        perp_x, perp_y = -ddy / length, ddx / length
+        half = max(scale * 0.4, 10.0)
+        bx1, by1 = mx - perp_x * half, my - perp_y * half
+        bx2, by2 = mx + perp_x * half, my + perp_y * half
         title = _html.escape(_full_text(door["lines"]))
         parts.append(
-            f'<line x1="{x1_}" y1="{y1_}" x2="{x2_}" y2="{y2_}" stroke="{_DG_INK}" stroke-width="3">'
+            f'<line x1="{bx1}" y1="{by1}" x2="{bx2}" y2="{by2}" stroke="{_DG_FIXED_HUES["rust"]}" stroke-width="5">'
             f"<title>{title}</title></line>"
         )
 
