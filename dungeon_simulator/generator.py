@@ -85,18 +85,38 @@ class DungeonGenerator:
     def _depth_exceeded(self, depth: int) -> bool:
         return self.max_depth is not None and depth > self.max_depth
 
-    def _edge_node(self, level: int) -> Node:
-        return Node(
-            id=self._id(), kind="edge", level=level,
-            lines=["You sense you've reached the edge of the dungeon. Time to leave!"],
+    def _edge_reason(self, depth: int) -> str:
+        """The generic 'edge of the dungeon' flavour text is real whenever the
+        room budget or depth cap cuts a branch short - but the roll just
+        above it (a Passage/Door/Stairs table result) may well have promised
+        a room, another passage, or stairs beyond. Left unexplained, that
+        reads as a contradiction ("ends in an open entrance to a room" ->
+        then the very next node is a dead end). Naming which cap actually
+        fired makes clear this is *our* simulation stopping early, not the
+        rulebook itself producing a dead end."""
+        if self.max_depth is not None and self._depth_exceeded(depth):
+            return (
+                f"[Limite di profondità raggiunto: max {self.max_depth} nodi dall'ingresso] "
+                "Il tiro qui sopra indicava una prosecuzione (stanza/passaggio/scale), ma questa "
+                "simulazione si interrompe deliberatamente a questa distanza dall'ingresso - non è "
+                "un vicolo cieco previsto dalle tabelle."
+            )
+        return (
+            f"[Budget di stanze esaurito: {self.rooms_created}/{self.target_rooms}] "
+            "Il tiro qui sopra indicava una prosecuzione (stanza/passaggio/scale), ma questa "
+            "simulazione ha già raggiunto il numero massimo di stanze previsto - non è un vicolo "
+            "cieco previsto dalle tabelle."
         )
 
-    def _make_edge(self, node: Node) -> None:
+    def _edge_node(self, level: int, depth: int = 0) -> Node:
+        return Node(id=self._id(), kind="edge", level=level, lines=[self._edge_reason(depth)])
+
+    def _make_edge(self, node: Node, depth: int = 0) -> None:
         """Turn an already-placed placeholder into an edge node in place -
         used when a job's budget check fails at dequeue time, after the
         placeholder (and its id) already exists in a parent's children."""
         node.kind = "edge"
-        node.lines = ["You sense you've reached the edge of the dungeon. Time to leave!"]
+        node.lines = [self._edge_reason(depth)]
 
     def _run_queue(self) -> None:
         while self._queue:
@@ -133,7 +153,7 @@ class DungeonGenerator:
         if kind == "secret":
             return self.resolve_secret_door(level, modifier, depth)
         if self.budget_exhausted() or self._depth_exceeded(depth):
-            return self._edge_node(level)
+            return self._edge_node(level, depth)
         if kind == "room":
             return self._enqueue(level, self._fill_room, level, modifier, depth)
         if kind == "passage":
@@ -215,7 +235,7 @@ class DungeonGenerator:
 
     def _fill_passage(self, node: Node, level: int, depth: int) -> None:
         if self.budget_exhausted() or self._depth_exceeded(depth):
-            self._make_edge(node)
+            self._make_edge(node, depth)
             return
         node.kind = "passage"
         events = node.geo.setdefault("events", [])
@@ -379,7 +399,7 @@ class DungeonGenerator:
 
     def _fill_door(self, node: Node, level: int, depth: int) -> None:
         if self.budget_exhausted() or self._depth_exceeded(depth):
-            self._make_edge(node)
+            self._make_edge(node, depth)
             return
         value, entry = DOOR_TABLE.roll(self.dice)
         payload = entry.payload
@@ -415,7 +435,7 @@ class DungeonGenerator:
 
     def _fill_stairs(self, node: Node, level: int, depth: int) -> None:
         if self.budget_exhausted() or self._depth_exceeded(depth):
-            self._make_edge(node)
+            self._make_edge(node, depth)
             return
         value, entry = STAIRS_TABLE.roll(self.dice)
         payload = entry.payload
@@ -429,7 +449,7 @@ class DungeonGenerator:
 
     def _fill_room(self, node: Node, level: int, modifier: int, depth: int) -> None:
         if self.budget_exhausted() or self._depth_exceeded(depth):
-            self._make_edge(node)
+            self._make_edge(node, depth)
             return
         shape = roll_room_shape(self.dice)
         node.kind = "room"
