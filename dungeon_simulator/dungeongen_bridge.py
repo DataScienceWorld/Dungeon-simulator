@@ -151,6 +151,18 @@ def _grid_cell_path(points: list[tuple]) -> list[tuple]:
     return _dedupe(cells)
 
 
+def _pad_single_cell(cells: list[tuple]) -> list[tuple]:
+    """Two rooms only 5ft apart are joined by a corridor that genuinely fits
+    inside a single 10ft cell, so its cell path is one cell long. That is a
+    real connection and dungeongen draws it happily - a passage whose two
+    waypoints are the same cell renders as a one-cell corridor, and its
+    adapter derives the two door directions from the rooms at either end.
+    What it cannot survive is being handed a one-element path, so the cell is
+    repeated. Dropping such links instead (the previous behaviour) left the
+    rooms looking unconnected on the map."""
+    return [cells[0], cells[0]] if len(cells) == 1 else cells
+
+
 def door_cells(door: dict) -> list[tuple]:
     """The cells a door's own segment occupies, by the same conversion the
     corridor around it uses."""
@@ -333,7 +345,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         points = _dedupe(link["points"])
         if len(points) < 2:
             continue
-        waypoints = _grid_cell_path(points)
+        waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2:
             continue
         waypoints = _ensure_perpendicular_approach(waypoints, from_info[1:], at_start=True)
@@ -343,7 +355,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # has no concept of one and has been observed to hang trying to
             # route it, rather than raising a catchable error. Fall back to
             # the pre-fixup, still axis-aligned waypoints instead.
-            waypoints = _grid_cell_path(points)
+            waypoints = _pad_single_cell(_grid_cell_path(points))
             if len(waypoints) < 2:
                 continue
 

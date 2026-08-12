@@ -143,3 +143,35 @@ def test_overlay_offset_matches_where_dungeongen_actually_draws():
                     )
                     checked += 1
     assert checked, "expected at least one island to render through dungeongen"
+
+
+def test_short_links_still_become_passages():
+    """Two rooms 5ft apart are joined by a corridor that fits inside a single
+    10ft cell, so its cell path is one cell long. Such a link must still reach
+    dungeongen: dropping it (as a `len(waypoints) < 2` guard once did) left the
+    rooms drawn with no connection between them at all."""
+    seen_single_cell = False
+    for seed in (72, 1, 2, 4, 8, 15):
+        dungeon = DungeonGenerator(seed=seed, max_depth=5).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                placed = {room["id"] for room in island["rooms"]}
+                linked_pairs = {
+                    (link["from_room"], link["to_room"]) for link in island["links"]
+                    if link["from_room"] in placed and link["to_room"] in placed
+                }
+                if not linked_pairs:
+                    continue
+                dg = bridge.build_dungeongen_dungeon(island)
+                built = {(p.start_room, p.end_room) for p in dg.passages.values()}
+                for from_room, to_room in linked_pairs:
+                    assert (f"r{from_room}", f"r{to_room}") in built, (
+                        f"seed {seed}: link {from_room}->{to_room} never became a passage"
+                    )
+                for link in island["links"]:
+                    if (link["from_room"], link["to_room"]) in linked_pairs:
+                        if len(bridge._grid_cell_path(bridge._dedupe(link["points"]))) == 1:
+                            seen_single_cell = True
+    assert seen_single_cell, "expected at least one link short enough to occupy a single cell"
