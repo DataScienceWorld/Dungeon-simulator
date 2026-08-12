@@ -79,6 +79,48 @@ def _is_axis_aligned_path(waypoints) -> bool:
     return all(a[0] == b[0] or a[1] == b[1] for a, b in zip(waypoints, waypoints[1:]))
 
 
+def _grid_points_without_collapsing_real_moves(points: list[tuple]) -> list[tuple]:
+    """Round a deduped, continuous-space point list to dungeongen's integer
+    grid without silently erasing a real (if sub-cell) hop.
+
+    Our own geometry now guarantees things like a passage's minimum 5ft
+    length or a door's own 5ft width as genuinely distinct points - but
+    dungeongen's grid cell is a full 10ft, so two points a real 5ft apart
+    can both round to the very same cell. A naive round-then-dedupe would
+    then just merge them, and that hop - a whole passage segment - vanishes
+    from the map instead of merely being drawn shorter than it really is.
+    Whenever rounding would collapse two points that were genuinely distinct
+    before rounding, the later one is nudged one more cell in the direction
+    it was already moving, so the hop stays visible. The axis that *didn't*
+    move is always copied forward from the previous output point rather than
+    re-rounded independently - our own geometry only ever moves one axis at
+    a time, and independently rounding the untouched axis on a later point
+    could disagree with an axis that was just nudged, handing dungeongen a
+    diagonal waypoint (it has no concept of one and has been observed to
+    hang trying to route it)."""
+    grid_points = [(_grid(points[0][0]), _grid(points[0][1]))]
+    for i in range(1, len(points)):
+        prev_gx, prev_gy = grid_points[-1]
+        dx_raw = points[i][0] - points[i - 1][0]
+        dy_raw = points[i][1] - points[i - 1][1]
+        if dx_raw and not dy_raw:
+            gx = _grid(points[i][0])
+            if gx == prev_gx:
+                gx = prev_gx + (1 if dx_raw > 0 else -1)
+            grid_points.append((gx, prev_gy))
+        elif dy_raw and not dx_raw:
+            gy = _grid(points[i][1])
+            if gy == prev_gy:
+                gy = prev_gy + (1 if dy_raw > 0 else -1)
+            grid_points.append((prev_gx, gy))
+        else:
+            # Diagonal or zero-length move in raw space - shouldn't normally
+            # happen (our own geometry is always axis-aligned) - fall back to
+            # independent rounding rather than guess which axis to correct.
+            grid_points.append((_grid(points[i][0]), _grid(points[i][1])))
+    return grid_points
+
+
 def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     dx, dy = point[0] - cx, point[1] - cy
@@ -204,7 +246,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         points = _dedupe(link["points"])
         if len(points) < 2:
             continue
-        waypoints = _dedupe([(_grid(px), _grid(py)) for px, py in points])
+        waypoints = _dedupe(_grid_points_without_collapsing_real_moves(points))
         if len(waypoints) < 2:
             continue
         waypoints = _ensure_perpendicular_approach(waypoints, from_info[1:], at_start=True)
@@ -214,7 +256,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # has no concept of one and has been observed to hang trying to
             # route it, rather than raising a catchable error. Fall back to
             # the pre-fixup, still axis-aligned waypoints instead.
-            waypoints = _dedupe([(_grid(px), _grid(py)) for px, py in points])
+            waypoints = _dedupe(_grid_points_without_collapsing_real_moves(points))
             if len(waypoints) < 2:
                 continue
 
