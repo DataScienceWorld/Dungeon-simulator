@@ -160,8 +160,11 @@ _RENDER_SCRIPT_JS = """
     // disappear behind its wall, not read as cutting through it.
     data.corridors.forEach(function (c) {
       if (c.points.length < 2) return;
+      // Width comes from the actual rolled passage width (floored at a full
+      // 5ft square) rather than a flat decorative stroke, so a corridor the
+      // tables "widened" or "narrowed" actually reads as wider or narrower.
       var node = rc.linearPath(c.points, {
-        stroke: 'var(--brass)', strokeWidth: 6, roughness: 1.7, bowing: 1.8, seed: seedFor(c.id, 3),
+        stroke: 'var(--brass)', strokeWidth: Math.max(c.width || 10, 6), roughness: 1.7, bowing: 1.8, seed: seedFor(c.id, 3),
       });
       addTitle(node, c.title);
       svg.appendChild(node);
@@ -401,7 +404,8 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             continue  # part of a room-to-room link dungeongen already drew
         sx_, sy_ = px(sx, sy)
         ex_, ey_ = px(ex, ey)
-        parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="3" />')
+        stroke_w = max(corridor.get("width", 0.5) * scale, 3)
+        parts.append(f'<line x1="{sx_}" y1="{sy_}" x2="{ex_}" y2="{ey_}" stroke="{_DG_INK}" stroke-width="{stroke_w}" />')
 
     for door in island["doors"]:
         if _covered(door["x1"], door["y1"]):
@@ -538,7 +542,11 @@ def _level_payload(level: int, islands: list[dict]) -> dict:
 
         for corridor in island["corridors"]:
             points = [[px(cx - minx), px(cy - miny)] for cx, cy in corridor["points"]]
-            corridors.append({"id": corridor["id"], "points": points, "title": _full_text(corridor["lines"])})
+            width_px = corridor.get("width", 0.5) * PX
+            corridors.append({
+                "id": corridor["id"], "points": points, "width": width_px,
+                "title": _full_text(corridor["lines"]),
+            })
 
         for door in island["doors"]:
             x1, y1 = px(door["x1"] - minx), px(door["y1"] - miny)

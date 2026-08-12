@@ -29,6 +29,7 @@ room - dead ends, map edges, stairs and portals never resolve into one.
 from __future__ import annotations
 
 FT_PER_UNIT = 10.0
+DEFAULT_PASSAGE_WIDTH_FT = 5.0  # a passage's width before any "widens"/"narrows" roll - one full 5ft square
 ROOM_MARGIN = 0.6  # minimum clear gap kept between two rooms' footprints, in grid units
 _PUSH_STEP = 0.5
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
@@ -277,7 +278,10 @@ class _Layout:
             # there's nothing beyond it.
             dx, dy = _VECTORS[heading]
             sx, sy = x + dx * _CAP_STUB_LENGTH, y + dy * _CAP_STUB_LENGTH
-            island["corridors"].append({"id": f"cap{node.id}", "points": [(x, y), (sx, sy)], "lines": []})
+            island["corridors"].append({
+                "id": f"cap{node.id}", "points": [(x, y), (sx, sy)],
+                "width": DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT, "lines": [],
+            })
             island["caps"].append({"id": node.id, "x": sx, "y": sy, "kind": kind, "lines": node.lines})
             return x, y
         return x, y
@@ -397,7 +401,13 @@ class _Layout:
         return x, y
 
     def _walk_passage(self, node, x, y, heading, level, island, path):
-        points = [(x, y)]
+        # A passage's width isn't fixed for its whole length - a "narrows"/
+        # "widens" roll partway through changes it from that point on - so
+        # the walked points are split into separate width-tagged runs rather
+        # than one corridor at a single, uniform width (which would either
+        # under- or over-state most of its own length).
+        width = node.geo.get("width_ft", DEFAULT_PASSAGE_WIDTH_FT) / FT_PER_UNIT
+        runs = [{"width": width, "points": [(x, y)]}]
         children = iter(node.children)
         had_child = False
         for event in node.geo.get("events", []):
@@ -406,14 +416,18 @@ class _Layout:
                 length = event["length_ft"] / FT_PER_UNIT
                 dx, dy = _VECTORS[heading]
                 x, y = x + dx * length, y + dy * length
-                points.append((x, y))
+                runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
             elif etype == "turn":
                 heading = _rotate(heading, event["dir"])
-                points.append((x, y))
+                runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
             elif etype == "resize":
-                continue
+                # A rulebook "narrows" roll floors at 5ft and "widens" floors
+                # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
+                # here is just a last-resort floor for values from elsewhere.
+                width = max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT) / FT_PER_UNIT
+                runs.append({"width": width, "points": [(x, y)]})
             elif etype == "child":
                 child = next(children, None)
                 if child is None:
@@ -433,22 +447,31 @@ class _Layout:
                     # meet it. Branch takeoffs (turn is not None) never need this: the
                     # branch is a separate corridor that fixes up its own trailing
                     # point the same way, and the trunk itself hasn't moved.
-                    points[-1] = (ax, ay)
+                    runs[-1]["points"][-1] = (ax, ay)
                     x, y = ax, ay
         for child in children:  # any child without a matching event (shouldn't normally happen)
             had_child = True
             self._enter(child, x, y, heading, level, island, False, path)
         if not had_child:
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
-        # A "turn" records a point without moving (it just changes heading in
-        # place), so a passage that turns before its first move - or one cut
-        # short right after a turn - ends up with the same point twice in a
-        # row; RoughJS draws a zero-length segment like that as a stray blob.
-        deduped = [points[0]]
-        for point in points[1:]:
-            if point != deduped[-1]:
-                deduped.append(point)
-        island["corridors"].append({"id": node.id, "points": deduped, "lines": node.lines})
+        for i, run in enumerate(runs):
+            # A "turn" records a point without moving (it just changes heading
+            # in place), so a passage that turns before its first move - or one
+            # cut short right after a turn - ends up with the same point twice
+            # in a row; RoughJS draws a zero-length segment like that as a
+            # stray blob.
+            pts = run["points"]
+            deduped = [pts[0]]
+            for point in pts[1:]:
+                if point != deduped[-1]:
+                    deduped.append(point)
+            # Only the first run keeps this node's own log lines attached -
+            # duplicating them on every width-change run would repeat the
+            # same tooltip/log text several times over for one passage.
+            island["corridors"].append({
+                "id": node.id, "points": deduped, "width": run["width"],
+                "lines": node.lines if i == 0 else [],
+            })
         return x, y
 
 
