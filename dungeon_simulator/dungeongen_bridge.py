@@ -39,13 +39,20 @@ try:
 except Exception as exc:  # pragma: no cover - environment dependent
     _IMPORT_ERROR = exc
 
-# Our grid unit is 10 ft; dungeongen wants integer grid coordinates, and
-# room/door pushback can land things on a half unit (e.g. an odd-width room
-# centered on a corridor), so coordinates are rounded to the nearest whole
-# unit (SCALE=1) rather than doubled - dungeongen's own +/-3200 map-unit
-# safety limit (see _MAX_MAP_UNITS below) is tight enough on our larger,
-# more sprawling dungeons that doubling the footprint isn't affordable.
-SCALE = 1
+# Our own grid unit is 10 ft, but the rulebook's own tables genuinely produce
+# 5ft features - a passage's minimum length, a door's own width - which is
+# exactly half of dungeongen's cell. At SCALE=1 (1 our-unit = 1 dungeongen
+# cell = 10ft) any real 5ft hop lands on a *half*-integer cell, and rounding
+# it either erases it entirely (both ends round to the same cell) or draws it
+# as a full 10ft cell - neither of which is what actually happened. SCALE=2
+# makes one dungeongen cell 5ft, so every real 5ft feature gets its own exact
+# integer cell, matching the rulebook's own resolution instead of guessing at
+# it. The cost: dungeongen's +/-3200 map-unit safety limit (see
+# _MAX_MAP_UNITS below) now represents *half* the real-world footprint it did
+# before, so islands that used to just fit now more often fall back to the
+# hand-drawn RoughJS renderer instead - an accepted trade-off for correctness
+# over how often the nicer background art applies.
+SCALE = 2
 
 _SHAPE_MAP = {
     "rect": "RECT", "square": "SQUARE", "circle": "CIRCLE",
@@ -53,8 +60,10 @@ _SHAPE_MAP = {
 }
 
 # Visual-only floor for dungeongen's background render - see the comment where
-# it's applied in build_dungeongen_dungeon().
-_MIN_ROOM_GRID_UNITS = 2
+# it's applied in build_dungeongen_dungeon(). In dungeongen-cell units, which
+# are now 5ft each (SCALE=2) - 4 cells is the same real-world 20ft floor this
+# was before SCALE doubled.
+_MIN_ROOM_GRID_UNITS = 4
 
 _COMPASS_TO_DG_DIRECTION = {"N": "north", "E": "east", "S": "south", "W": "west"}
 
@@ -83,21 +92,22 @@ def _grid_points_without_collapsing_real_moves(points: list[tuple]) -> list[tupl
     """Round a deduped, continuous-space point list to dungeongen's integer
     grid without silently erasing a real (if sub-cell) hop.
 
-    Our own geometry now guarantees things like a passage's minimum 5ft
-    length or a door's own 5ft width as genuinely distinct points - but
-    dungeongen's grid cell is a full 10ft, so two points a real 5ft apart
-    can both round to the very same cell. A naive round-then-dedupe would
-    then just merge them, and that hop - a whole passage segment - vanishes
-    from the map instead of merely being drawn shorter than it really is.
-    Whenever rounding would collapse two points that were genuinely distinct
-    before rounding, the later one is nudged one more cell in the direction
-    it was already moving, so the hop stays visible. The axis that *didn't*
-    move is always copied forward from the previous output point rather than
-    re-rounded independently - our own geometry only ever moves one axis at
-    a time, and independently rounding the untouched axis on a later point
-    could disagree with an axis that was just nudged, handing dungeongen a
-    diagonal waypoint (it has no concept of one and has been observed to
-    hang trying to route it)."""
+    SCALE=2 makes a real 5ft feature (a passage's minimum length, a door's
+    own width) land on an exact integer cell in the common case - but
+    banded wall offsets and pushback still produce arbitrary fractional
+    coordinates that don't align even at that resolution, and two such
+    points can still round to the very same cell. A naive round-then-dedupe
+    would then just merge them, and that hop - a whole passage segment -
+    vanishes from the map instead of merely being drawn shorter than it
+    really is. Whenever rounding would collapse two points that were
+    genuinely distinct before rounding, the later one is nudged one more
+    cell in the direction it was already moving, so the hop stays visible.
+    The axis that *didn't* move is always copied forward from the previous
+    output point rather than re-rounded independently - our own geometry
+    only ever moves one axis at a time, and independently rounding the
+    untouched axis on a later point could disagree with an axis that was
+    just nudged, handing dungeongen a diagonal waypoint (it has no concept
+    of one and has been observed to hang trying to route it)."""
     grid_points = [(_grid(points[0][0]), _grid(points[0][1]))]
     for i in range(1, len(points)):
         prev_gx, prev_gy = grid_points[-1]
