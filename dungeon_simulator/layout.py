@@ -555,6 +555,14 @@ class _Layout:
                 heading = _rotate(heading, event["dir"])
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
+                # The passage now has to actually go somewhere in its new
+                # direction before anything else happens to it. Leaving
+                # `moved` set meant a turn immediately followed by another
+                # turn, or by a feature, produced no leg at all in the new
+                # heading: the two turns cancelled out on the map and the
+                # feature hung off the corner, so "turns left, then an
+                # opening on the right" drew as a single 10ft stub.
+                moved = False
             elif etype == "resize":
                 ensure_min_length()
                 # A rulebook "narrows" roll floors at 5ft and "widens" floors

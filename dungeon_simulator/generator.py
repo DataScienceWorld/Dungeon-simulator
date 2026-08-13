@@ -348,6 +348,27 @@ class DungeonGenerator:
                 events.append({"type": "child", "turn": None})
                 return
 
+            # A feature the table places *in a wall* rather than at the end of
+            # the passage - "Door in the left wall", "Opening to the right,
+            # leading to stairs". It hangs off the side as a branch and the
+            # passage carries on past it; it is not a turn, and it is not the
+            # end of the passage. Emitting it as a `turn` (which is what the
+            # table used to say) rotated the trunk itself and then sent the
+            # door straight ahead, so the passage both changed direction and
+            # stopped: a 10ft passage read as a 20ft one with the door drawn
+            # as its second half.
+            side = payload.get("side")
+            if side:
+                child = self.dispatch_beyond(tag, level, depth=depth + 1)
+                node.children.append(child)
+                events.append({"type": "child", "turn": side})
+                if tag != "stairs":
+                    return
+                segments += 1
+                if segments >= MAX_PASSAGE_SEGMENTS:
+                    return
+                continue
+
             # terminal: door / stairs / room
             child = self.dispatch_beyond(tag, level, depth=depth + 1)
             node.children.append(child)
