@@ -117,6 +117,29 @@ def _banded_wall_offset(index: int, count: int, wall_cells: int, node_id: int):
     return min(cell, high)
 
 
+_NOT_DRAWN = (
+    "[Layout] Questa voce non e' disegnata sulla mappa: si trova oltre un punto in cui il "
+    "tracciato si e' interrotto. Il tiro e il contenuto restano comunque nel registro."
+)
+
+
+def _mark_branch_not_drawn(node) -> None:
+    """Say, on every entry beyond a branch that was cut, that it isn't drawn.
+
+    When a room can't be placed - or a wall has no cell left for another
+    opening - the walk stops there, so nothing past that point is ever
+    reached, and nothing past that point would otherwise say a word about it.
+    The note on the node that failed explains *itself*, but a reader looking
+    up one particular room's entry would have to trace back up the tree to
+    discover it is not on the map at all. Everything the dice produced stays
+    in the log either way; what this adds is that each entry states its own
+    status rather than relying on a note somewhere above it."""
+    for child in node.children:
+        for descendant in child.walk():
+            if descendant.kind in ("room", "passage", "door", "stairs"):
+                descendant.lines.append(_NOT_DRAWN)
+
+
 def _new_island() -> dict:
     return {
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
@@ -391,6 +414,7 @@ class _Layout:
                 "sovrapposizioni - il ramo si interrompe qui (il contenuto resta comunque nel registro)."
             )
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
+            _mark_branch_not_drawn(node)
             return x, y
 
         # The doorway keeps the position the corridor arrived at; the room is
@@ -477,6 +501,7 @@ class _Layout:
                     "apertura da 10ft - il ramo si interrompe qui (il contenuto resta comunque "
                     "nel registro)."
                 )
+                _mark_branch_not_drawn(child)
                 continue
             # The wall the exit faces, then the cell along it. Both read off
             # the room's box, so the result never depends on which way the
