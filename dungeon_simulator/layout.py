@@ -87,9 +87,13 @@ def _pseudo_unit(n: int) -> float:
 
 
 def _banded_wall_offset(index: int, count: int, wall_cells: int, node_id: int):
-    """Where the `index`-th of `count` exits sits along a wall `wall_cells`
-    long, as an offset from that wall's middle - or None if the wall has no
-    cell left for it.
+    """Which cell of the wall the `index`-th of `count` exits sits in, counted
+    from the wall's low end - or None if the wall has no cell left for it.
+
+    Counted from the low end rather than as a signed offset from the middle:
+    the sign of a room's perpendicular axis flips with the heading it was
+    entered from, so a signed offset lands correctly for rooms facing one way
+    and a cell off for rooms facing the other.
 
     An exit is a 10ft opening, so it occupies one whole cell and two exits
     cannot share one. Each gets its own band of the wall and, within it, a
@@ -107,7 +111,7 @@ def _banded_wall_offset(index: int, count: int, wall_cells: int, node_id: int):
     if high < low:
         high = low
     cell = low + int(_pseudo_unit(node_id) * (high - low + 1))
-    return min(cell, high) - wall_cells / 2
+    return min(cell, high)
 
 
 def _new_island() -> dict:
@@ -345,12 +349,23 @@ class _Layout:
         # so a room blocked on one side can sit beside the obstacle instead.
         # The doorway can travel as far as the wall's own corners, no further
         # - past that it would no longer be on the wall at all.
-        # One candidate per cell of the entry wall: the doorway is a whole
-        # cell, so the room can only sit at whole-cell offsets around it, and
-        # both its edges stay on the grid. k=0 puts the doorway in one corner,
-        # k=w in the other; sorting by distance keeps the centred placement -
-        # the natural one - first.
-        offsets = sorted((k - w / 2 for k in range(w + 1)), key=abs)
+        # One candidate per cell of the entry wall. Enumerated as the room's
+        # own low edge rather than as a signed offset from the doorway: the
+        # perpendicular axis points the other way for half the headings, so a
+        # signed range that is right for one is a cell out for the other.
+        #
+        # The condition is that the doorway's *cell* is one of the room's, not
+        # merely that the doorway sits somewhere on the wall line - a room
+        # whose far edge lands exactly on the doorway looks attached but
+        # occupies a column the corridor doesn't, so the two only touch at a
+        # corner. Hence low edge in [entry - w + 1, entry]: exactly w
+        # placements, all of them real.
+        entry_perp, perp_sign = (x, px) if px else (y, py)
+        offsets = sorted(
+            (perp_sign * (low + w / 2 - entry_perp)
+             for low in range(round(entry_perp) - w + 1, round(entry_perp) + 1)),
+            key=abs,
+        )
 
         def first_clear(entry_x, entry_y):
             for offset in offsets:
@@ -412,6 +427,8 @@ class _Layout:
             (far_x + px * w / 2, far_y + py * w / 2),
             (far_x - px * w / 2, far_y - py * w / 2),
         ]
+        rx0, ry0 = min(c[0] for c in corners), min(c[1] for c in corners)
+        rx1, ry1 = max(c[0] for c in corners), max(c[1] for c in corners)
         island["rooms"].append({
             "id": node.id, "corners": corners, "shape": node.geo.get("shape", "rect"),
             "content_tag": node.geo.get("content_tag"), "lines": node.lines,
@@ -439,25 +456,36 @@ class _Layout:
             index = band_index[slot]
             band_index[slot] += 1
             count = same_wall_count[slot]
-            wall_cells = w if slot == "forward" else depth
-            offset = _banded_wall_offset(index, count, wall_cells, child.id)
-            if offset is None:
+            # Which way this exit faces decides which wall it's in, and the
+            # wall is then read straight off the room's own box. Deriving it
+            # from a signed offset around the wall's midpoint instead was
+            # wrong for half the rooms: the sign of the perpendicular axis
+            # flips with the heading, so a room entered from the south put its
+            # side exits one row past its own last row - the corridor then ran
+            # alongside the room instead of into it, and dungeongen drew the
+            # doorway chip stranded in the rock beside it.
+            eh = heading if slot == "forward" else _rotate(heading, slot)
+            along_x = eh in ("N", "S")
+            wall_cells = int(round(rx1 - rx0 if along_x else ry1 - ry0))
+            cell = _banded_wall_offset(index, count, wall_cells, child.id)
+            if cell is None:
                 child.lines.append(
                     "[Layout] La parete di questa stanza non ha abbastanza spazio per un'altra "
                     "apertura da 10ft - il ramo si interrompe qui (il contenuto resta comunque "
                     "nel registro)."
                 )
                 continue
-            if slot == "forward":
-                ex, ey, eh = far_x + px * offset, far_y + py * offset, heading
-            elif slot == "right":
-                eh = _rotate(heading, "right")
-                ex = mid_x + dx * (depth / 2 + offset) + px * w / 2
-                ey = mid_y + dy * (depth / 2 + offset) + py * w / 2
-            else:  # left
-                eh = _rotate(heading, "left")
-                ex = mid_x + dx * (depth / 2 + offset) - px * w / 2
-                ey = mid_y + dy * (depth / 2 + offset) - py * w / 2
+            # The wall the exit faces, then the cell along it. Both read off
+            # the room's box, so the result never depends on which way the
+            # room happens to be facing.
+            if eh == "N":
+                ex, ey = rx0 + cell, ry0
+            elif eh == "S":
+                ex, ey = rx0 + cell, ry1
+            elif eh == "E":
+                ex, ey = rx1, ry0 + cell
+            else:  # W
+                ex, ey = rx0, ry0 + cell
             # "left"/"right" in the log are relative to the direction of
             # travel (matching the rulebook's own narrative convention -
             # tables say things like "a side passage leads off to the

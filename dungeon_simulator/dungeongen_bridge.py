@@ -172,14 +172,30 @@ def _grid_cell_path(points: list[tuple]) -> list[tuple]:
         dx, dy = bx - ax, by - ay
         if dx and not dy:
             start, end = _cell_span(ax, bx)
+            row = math.floor(ay * SCALE)
             if cx is None:
-                cx, cy = start, math.floor(ay * SCALE)
+                cx, cy = start, row
+                cells.append((cx, cy))
+            elif row != cy:
+                # The path turned, and the new leg runs along a different row
+                # than the cell we're standing in. Stepping straight to the
+                # new leg's far end would leave a diagonal jump - two cells
+                # touching only at a corner, which is not a corridor you can
+                # walk down. The corner cell in between makes it continuous;
+                # carrying the old row forward instead (what this used to do)
+                # kept it continuous but ended the corridor one cell short of
+                # the room it was heading for.
+                cy = row
                 cells.append((cx, cy))
             cx = end
         elif dy and not dx:
             start, end = _cell_span(ay, by)
+            col = math.floor(ax * SCALE)
             if cx is None:
-                cx, cy = math.floor(ax * SCALE), start
+                cx, cy = col, start
+                cells.append((cx, cy))
+            elif col != cx:
+                cx = col
                 cells.append((cx, cy))
             cy = end
         else:
