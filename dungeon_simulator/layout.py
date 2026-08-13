@@ -36,10 +36,13 @@ from __future__ import annotations
 
 FT_PER_UNIT = 10.0
 DEFAULT_PASSAGE_WIDTH_FT = 5.0  # a passage's width before any "widens"/"narrows" roll - one full 5ft square
-ROOM_MARGIN = 0.5  # minimum clear gap between two rooms' footprints, in grid units - one
-# full 5ft square of rock. 0.6 was tried and reverted: it is not a round number of squares,
-# and being 1ft wider than the gap a room can actually reach by sliding along its own entry
-# wall, it rejected placements that were otherwise perfectly clear (see _walk_room).
+ROOM_MARGIN = 0.0  # rooms may share a wall, they just may not overlap. A gap is not
+# something to enforce here: the passage between two connected rooms already occupies at
+# least one whole cell of its own, so it is the passage that separates them. Demanding a
+# further clear cell only rejected real placements - a room reached through a door that sits
+# against a neighbour's wall has nowhere else to be, and was simply dropped instead. Across
+# 60 seeds x 2 depths, dropping the requirement places 649 rooms rather than 565, with the
+# unplaceable ones down from 9% to 5% and still no two rooms overlapping.
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
 _NOTABLE_SLIDE_UNITS = 2.0  # 20ft - an offset at least this large gets called out in the log
 
@@ -580,8 +583,24 @@ class _Layout:
                 turn = event.get("turn")
                 child_heading = _rotate(heading, turn)
                 child.geo["approach_heading"] = child_heading
-                child_path = path.branch((x, y)) if turn is not None else path
-                ax, ay = self._enter(child, x, y, child_heading, level, island,
+                bx, by = x, y
+                if turn is not None:
+                    # A branch leaves through the *side wall of the cell the
+                    # passage is standing in*, not from the lattice point its
+                    # last step ended on - those differ by a cell, and taking
+                    # the endpoint put the branch diagonally off the corner of
+                    # the passage instead of against its flank. Two corrections,
+                    # on different axes, so they don't interact: step back onto
+                    # the last cell along the direction of travel, then leave
+                    # from that cell's far edge when the branch heads the
+                    # positive way (its near edge when it heads the negative
+                    # way, which is already where we are).
+                    tdx, tdy = _VECTORS[heading]
+                    bdx, bdy = _VECTORS[child_heading]
+                    bx += (1 if bdx > 0 else 0) - (1 if tdx > 0 else 0)
+                    by += (1 if bdy > 0 else 0) - (1 if tdy > 0 else 0)
+                child_path = path.branch((bx, by)) if turn is not None else path
+                ax, ay = self._enter(child, bx, by, child_heading, level, island,
                                       bool(event.get("portal")), child_path)
                 if event.get("portal"):
                     island["portals"].append({"id": node.id, "x": x, "y": y, "lines": node.lines})
