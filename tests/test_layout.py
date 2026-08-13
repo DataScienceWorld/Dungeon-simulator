@@ -21,16 +21,21 @@ def _bbox(island):
     return min(xs), max(xs)
 
 
-_NO_SPACE = "Non c'e' spazio sulla mappa"
+_BRANCH_STOPS = "il ramo si interrompe qui"
 
 
 def test_every_room_is_placed_or_accounted_for_and_no_negative_bbox_after_translation():
-    """A room may legitimately not fit: rather than shove it somewhere the
-    roll never put it, layout leaves it off the map (see _walk_room). What
-    must never happen is a room quietly vanishing - every room the generator
-    rolled is either drawn, or says in the log that it couldn't be placed, or
-    sits behind one that said so (its branch is never walked, and the note on
-    the room that failed states the branch stops there).
+    """A room may legitimately not reach the map: it may not fit anywhere
+    along its own entry wall, or the wall it hangs off may have no cell left
+    for another 10ft opening. Either way the branch stops there and says so.
+    What must never happen is a room quietly vanishing - every room the
+    generator rolled is either drawn, or carries the note itself, or sits
+    behind a node that does.
+
+    Keyed on the note's shared closing phrase rather than on either specific
+    wording, and checked on every node rather than only on rooms: a branch can
+    be cut at a passage or a door, and the rooms beyond it are then never
+    walked at all.
 
     The log is the source of truth here, not the map's own dead-end markers:
     a marker that would land inside a room's floor is cleaned up as noise
@@ -43,28 +48,24 @@ def test_every_room_is_placed_or_accounted_for_and_no_negative_bbox_after_transl
             room["id"] for islands in layout.values() for island in islands
             for room in island["rooms"]
         }
-        unplaceable = {
-            node.id for node in dungeon.all_nodes()
-            if node.kind == "room" and any(_NO_SPACE in line for line in node.lines)
-        }
-        assert not (placed & unplaceable), "a room cannot be both drawn and reported unplaceable"
-
-        # ids that never reached the map at all must all sit behind an
-        # unplaceable ancestor - nothing disappears without a reason
-        blocked: set[int] = set()
+        accounted: set[int] = set()
 
         def mark(node, cut):
-            if node.kind == "room":
-                if cut:
-                    blocked.add(node.id)
-                cut = cut or node.id in unplaceable
+            stops = any(_BRANCH_STOPS in line for line in node.lines)
+            if node.kind == "room" and (cut or stops):
+                accounted.add(node.id)
             for child in node.children:
-                mark(child, cut)
+                mark(child, cut or stops)
 
         mark(dungeon.root, False)
+        assert not (placed & accounted), (
+            f"seed {seed}: a room cannot be both drawn and reported as not drawn"
+        )
         rooms_in_tree = {n.id for n in dungeon.all_nodes() if n.kind == "room"}
         assert len(rooms_in_tree) == dungeon.room_count
-        assert rooms_in_tree == placed | unplaceable | blocked
+        assert rooms_in_tree == placed | accounted, (
+            f"seed {seed}: rooms unaccounted for: {sorted(rooms_in_tree - placed - accounted)}"
+        )
 
         for islands in layout.values():
             for island in islands:

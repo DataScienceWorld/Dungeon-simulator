@@ -3,17 +3,23 @@
 This walks the same tree the CLI/log renderer walks, but interprets each
 node's `geo` data (lengths, turns, room footprints - see generator.py) as
 turtle-graphics instructions: start at the origin facing north, and move/
-turn/branch as each passage segment or room exit dictates. Grid units are
-10 ft (matching the tables' own "x10 ft" convention).
+turn/branch as each passage segment or room exit dictates.
+
+Grid units are 10 ft (matching the tables' own "x10 ft" convention) and
+every measurement is quantized to whole units as it is walked - see
+_cells(). The map is therefore built *on* the grid, in the order the walk
+visits things: a room simply begins after the passage that leads to it, so
+nothing ever has to be nudged into agreement afterwards. A 5ft feature
+becomes one full 10ft cell rather than half of one; the log still reports
+the feet the tables actually rolled.
 
 The tree has no idea about physical space, so two unrelated branches can
 easily land on the same spot. Whenever a room is about to be placed, this
-walk checks it against every room already placed in the same island and,
-if it would overlap, pushes it further along the direction it's arriving
-from until it's clear - the connecting corridor/door simply stretches to
-reach it. This is exactly the kind of adjustment the source material's own
-"blanket rules" sanction (curtail/adjust features so the map stays legible)
-so favoring readability over pixel-exact corridor lengths is intentional.
+walk checks it against every room already placed in the same island and
+tries each position along its own entry wall. A room that fits nowhere is
+left off the map entirely, with a note saying so, rather than being shoved
+somewhere the roll never put it; the same goes for an exit when its wall
+has no cell left for another 10ft opening.
 
 A level can also have more than one disconnected "island" (e.g. two
 different staircases both landing on level 2, or a magical portal jump) -
@@ -35,7 +41,6 @@ ROOM_MARGIN = 0.5  # minimum clear gap between two rooms' footprints, in grid un
 # and being 1ft wider than the gap a room can actually reach by sliding along its own entry
 # wall, it rejected placements that were otherwise perfectly clear (see _walk_room).
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
-_SLIDE_STEP = 0.5  # 5ft - granularity of the search for a clear spot along the entry wall
 _NOTABLE_SLIDE_UNITS = 2.0  # 20ft - an offset at least this large gets called out in the log
 
 _HEADINGS = ["N", "E", "S", "W"]
@@ -53,8 +58,23 @@ def _rotate(heading: str, direction: str | None) -> str:
     return heading
 
 
-_WALL_INSET_FRAC = 0.2  # keep an exit within the middle 60% of the wall it's on,
-# away from the corners
+def _cells(feet: float) -> int:
+    """A measurement the tables rolled, in feet, as whole 10ft cells.
+
+    This map's smallest unit is one 10ft cell, so a 5ft feature - and the
+    rulebook rolls plenty of them: a passage's minimum length, a door's own
+    width - becomes one full cell rather than half of one. Nothing the tables
+    produced can round away to nothing.
+
+    Quantizing here, as the layout is walked, is what keeps the map coherent:
+    every room, passage and door is placed on the grid *by construction*, in
+    the order the walk visits them, so a room simply starts after the passage
+    that leads to it. Computing continuous coordinates and rounding them
+    afterwards instead left rooms and corridors disagreeing about which cell
+    they own, which no amount of nudging afterwards can reconcile - a room's
+    own corridor could round into its wall, or two neighbours into each other.
+    The log still reports the real feet the tables rolled."""
+    return max(1, round(feet / FT_PER_UNIT))
 
 
 def _pseudo_unit(n: int) -> float:
@@ -66,20 +86,28 @@ def _pseudo_unit(n: int) -> float:
     return ((n * 2654435761) & 0xFFFFFFFF) / 0xFFFFFFFF
 
 
-def _banded_wall_offset(index: int, count: int, wall_length: float, node_id: int) -> float:
-    """A deterministic offset from the center of a wall of the given length,
-    for the `index`-th of `count` exits sharing that wall. Each exit gets its
-    own equal-width band along the wall - two same-wall exits independently
-    randomized across the *whole* wall can still coincidentally land close
-    enough to read as one (observed: two "forward" exits 6ft apart on a
-    70ft-wide room). Confining each to its own band guarantees a minimum
-    separation of one band width; _WALL_INSET_FRAC still keeps it off that
-    band's own edges, so it doesn't crowd the wall's actual corners either."""
-    band = wall_length / count
-    band_start = -wall_length / 2 + index * band
-    inset = band * _WALL_INSET_FRAC
-    usable = max(0.0, band - 2 * inset)
-    return band_start + inset + _pseudo_unit(node_id) * usable
+def _banded_wall_offset(index: int, count: int, wall_cells: int, node_id: int):
+    """Where the `index`-th of `count` exits sits along a wall `wall_cells`
+    long, as an offset from that wall's middle - or None if the wall has no
+    cell left for it.
+
+    An exit is a 10ft opening, so it occupies one whole cell and two exits
+    cannot share one. Each gets its own band of the wall and, within it, a
+    deterministic cell (jitter keyed on the node id, so it's stable across
+    re-renders but two exits on a long wall don't line up). Bands are carved
+    by integer division, so the cells they pick are always distinct.
+
+    A wall with fewer cells than exits simply cannot hold them all: the ones
+    that don't fit get None, and the caller drops those branches rather than
+    stacking two openings on one cell."""
+    if index >= wall_cells:
+        return None
+    low = index * wall_cells // count
+    high = ((index + 1) * wall_cells // count) - 1
+    if high < low:
+        high = low
+    cell = low + int(_pseudo_unit(node_id) * (high - low + 1))
+    return min(cell, high) - wall_cells / 2
 
 
 def _new_island() -> dict:
@@ -251,7 +279,7 @@ class _Layout:
         if kind == "passage":
             return self._walk_passage(node, x, y, heading, level, island, path)
         if kind == "door":
-            length = node.geo.get("length_ft", 5) / FT_PER_UNIT
+            length = _cells(node.geo.get("length_ft", 5))
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
             door = {"id": node.id, "x1": x, "y1": y, "x2": nx, "y2": ny, "lines": node.lines}
@@ -269,11 +297,11 @@ class _Layout:
                     # corridor instead, and the door stays its real size.
                     island["corridors"].append({
                         "id": f"stretch{node.id}", "points": [(nx, ny), (ax, ay)],
-                        "width": DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT, "lines": [],
+                        "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "lines": [],
                     })
             return x, y
         if kind == "stairs":
-            length = node.geo.get("length_ft", 10) / FT_PER_UNIT
+            length = _cells(node.geo.get("length_ft", 10))
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
             island["stairs"].append({
@@ -296,15 +324,15 @@ class _Layout:
             sx, sy = x + dx * _CAP_STUB_LENGTH, y + dy * _CAP_STUB_LENGTH
             island["corridors"].append({
                 "id": f"cap{node.id}", "points": [(x, y), (sx, sy)],
-                "width": DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT, "lines": [],
+                "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "lines": [],
             })
             island["caps"].append({"id": node.id, "x": sx, "y": sy, "kind": kind, "lines": node.lines})
             return x, y
         return x, y
 
     def _walk_room(self, node, x, y, heading, level, island, path):
-        w = node.geo.get("width_ft", 20) / FT_PER_UNIT
-        depth = node.geo.get("length_ft", 20) / FT_PER_UNIT
+        w = _cells(node.geo.get("width_ft", 20))
+        depth = _cells(node.geo.get("length_ft", 20))
         dx, dy = _VECTORS[heading]
         px, py = -dy, dx  # perpendicular
 
@@ -317,14 +345,12 @@ class _Layout:
         # so a room blocked on one side can sit beside the obstacle instead.
         # The doorway can travel as far as the wall's own corners, no further
         # - past that it would no longer be on the wall at all.
-        limit = w / 2
-        offsets = [0.0]
-        step = _SLIDE_STEP
-        while step < limit:
-            offsets.extend((step, -step))
-            step += _SLIDE_STEP
-        if limit > 0:
-            offsets.extend((limit, -limit))  # doorway right in a corner
+        # One candidate per cell of the entry wall: the doorway is a whole
+        # cell, so the room can only sit at whole-cell offsets around it, and
+        # both its edges stay on the grid. k=0 puts the doorway in one corner,
+        # k=w in the other; sorting by distance keeps the centred placement -
+        # the natural one - first.
+        offsets = sorted((k - w / 2 for k in range(w + 1)), key=abs)
 
         def first_clear(entry_x, entry_y):
             for offset in offsets:
@@ -399,14 +425,12 @@ class _Layout:
             })
 
         slots = node.geo.get("exit_slots", [])
-        # An exit's position along its wall is randomized (deterministically,
-        # keyed on the child's id) rather than fixed dead-center, and - when
-        # more than one exit shares a wall (e.g. a room with two "forward"
-        # slots) - confined to its own equal-width band along that wall.
-        # Independent randomization alone isn't enough: two same-wall exits
-        # can still coincidentally land close enough to read as a single
-        # exit (observed: two "forward" exits only 6ft apart on a 70ft-wide
-        # room); banding guarantees they can never be closer than one band.
+        # An exit is a 10ft opening, so it takes a whole cell of the wall it's
+        # punched into and no two can share one. Each gets its own band of the
+        # wall, with a deterministic cell inside it (keyed on the child's id,
+        # so it's stable across re-renders but two exits on a long wall don't
+        # line up). A wall with fewer cells than exits can't hold them all -
+        # those that don't fit are dropped, along with everything beyond them.
         same_wall_count: dict[str, int] = {}
         for slot in slots:
             same_wall_count[slot] = same_wall_count.get(slot, 0) + 1
@@ -415,16 +439,22 @@ class _Layout:
             index = band_index[slot]
             band_index[slot] += 1
             count = same_wall_count[slot]
+            wall_cells = w if slot == "forward" else depth
+            offset = _banded_wall_offset(index, count, wall_cells, child.id)
+            if offset is None:
+                child.lines.append(
+                    "[Layout] La parete di questa stanza non ha abbastanza spazio per un'altra "
+                    "apertura da 10ft - il ramo si interrompe qui (il contenuto resta comunque "
+                    "nel registro)."
+                )
+                continue
             if slot == "forward":
-                offset = _banded_wall_offset(index, count, w, child.id)
                 ex, ey, eh = far_x + px * offset, far_y + py * offset, heading
             elif slot == "right":
-                offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "right")
                 ex = mid_x + dx * (depth / 2 + offset) + px * w / 2
                 ey = mid_y + dy * (depth / 2 + offset) + py * w / 2
             else:  # left
-                offset = _banded_wall_offset(index, count, depth, child.id)
                 eh = _rotate(heading, "left")
                 ex = mid_x + dx * (depth / 2 + offset) - px * w / 2
                 ey = mid_y + dy * (depth / 2 + offset) - py * w / 2
@@ -452,7 +482,7 @@ class _Layout:
         # the walked points are split into separate width-tagged runs rather
         # than one corridor at a single, uniform width (which would either
         # under- or over-state most of its own length).
-        width = node.geo.get("width_ft", DEFAULT_PASSAGE_WIDTH_FT) / FT_PER_UNIT
+        width = _cells(node.geo.get("width_ft", DEFAULT_PASSAGE_WIDTH_FT))
         runs = [{"width": width, "points": [(x, y)]}]
         children = iter(node.children)
         had_child = False
@@ -470,7 +500,7 @@ class _Layout:
             if moved:
                 return
             dx, dy = _VECTORS[heading]
-            x, y = x + dx * (DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT), y + dy * (DEFAULT_PASSAGE_WIDTH_FT / FT_PER_UNIT)
+            x, y = x + dx * _cells(DEFAULT_PASSAGE_WIDTH_FT), y + dy * _cells(DEFAULT_PASSAGE_WIDTH_FT)
             runs[-1]["points"].append((x, y))
             path.points.append((x, y))
             moved = True
@@ -478,7 +508,7 @@ class _Layout:
         for event in node.geo.get("events", []):
             etype = event["type"]
             if etype == "move":
-                length = event["length_ft"] / FT_PER_UNIT
+                length = _cells(event["length_ft"])
                 dx, dy = _VECTORS[heading]
                 x, y = x + dx * length, y + dy * length
                 runs[-1]["points"].append((x, y))
@@ -502,7 +532,7 @@ class _Layout:
                 # A rulebook "narrows" roll floors at 5ft and "widens" floors
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
-                width = max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT) / FT_PER_UNIT
+                width = _cells(max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT))
                 runs.append({"width": width, "points": [(x, y)]})
                 moved = False
             elif etype == "child":
