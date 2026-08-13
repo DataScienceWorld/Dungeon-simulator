@@ -74,7 +74,17 @@ def available() -> bool:
 
 
 def _grid(v: float) -> int:
-    return round(v * SCALE)
+    """Snap a lattice coordinate to dungeongen's grid, rounding a half cell
+    consistently *up*.
+
+    Not `round()`: that is banker's rounding, which sends .5 to the nearest
+    even integer - so a room from 6.5 to 9.5 has its two ends rounded in
+    opposite directions (6.5 down to 6, 9.5 up to 10) and comes out 4 cells
+    wide when it is 3. The extra cell is taken from whatever sits beside it,
+    which is how a 30ft room swallowed 10ft of the corridor leaving its own
+    west wall. Rounding both ends the same way keeps a room's drawn width
+    equal to its real one."""
+    return math.floor(v * SCALE + 0.5)
 
 
 def _dedupe(points: list[tuple]) -> list[tuple]:

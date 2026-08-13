@@ -206,3 +206,48 @@ def test_dungeongen_rooms_never_overlap_each_other():
                         assert not bridge._cell_rects_overlap(a, b), (
                             f"seed {seed}: dungeongen rooms {a} and {b} overlap"
                         )
+
+
+def test_rooms_are_not_drawn_wider_than_they_are():
+    """A room's cell rect must not claim more ground than the room really
+    covers. It did: `round()` is banker's rounding, so a room from 6.5 to 9.5
+    had its ends rounded in opposite directions and came out 4 cells wide when
+    it is 3 - and the extra cell was one the corridor leaving its own wall
+    needed, which is how 10ft of a 70ft passage ended up inside room 6.
+
+    Rooms small enough for the legibility floor to inflate are exempt: that
+    inflation is deliberate, and is covered by the overlap test above.
+    """
+    import math
+
+    checked = 0
+    # (seed, max_depth) - seed 72 at depth 5 is the case that exposed this:
+    # room 6 runs 6.5..9.5, whose ends banker's rounding sends opposite ways.
+    cases = [(seed, None) for seed in range(40)] + [(72, 5), (1, 5), (8, 5)]
+    for seed, max_depth in cases:
+        dungeon = DungeonGenerator(seed=seed, max_depth=max_depth).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                dg = bridge.build_dungeongen_dungeon(island)
+                for room in island["rooms"]:
+                    drawn = dg.rooms.get(f"r{room['id']}")
+                    if drawn is None:
+                        continue
+                    xs = [c[0] for c in room["corners"]]
+                    ys = [c[1] for c in room["corners"]]
+                    real_w, real_h = max(xs) - min(xs), max(ys) - min(ys)
+                    if real_w < bridge._MIN_ROOM_GRID_UNITS or real_h < bridge._MIN_ROOM_GRID_UNITS:
+                        continue  # the legibility floor may legitimately grow it
+                    assert drawn.width <= math.ceil(real_w - 1e-9), (
+                        f"seed {seed} room {room['id']}: drawn {drawn.width} cells wide "
+                        f"but only {real_w} cells of room"
+                    )
+                    assert drawn.height <= math.ceil(real_h - 1e-9), (
+                        f"seed {seed} room {room['id']}: drawn {drawn.height} cells tall "
+                        f"but only {real_h} cells of room"
+                    )
+                    checked += 1
+    assert checked, "expected at least one room to check"
+
