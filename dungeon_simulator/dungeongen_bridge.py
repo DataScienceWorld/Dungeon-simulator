@@ -402,6 +402,35 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             exit_type=_DGExitType.EXIT, room_id=from_info[0],
         ))
 
+    # The corridors on those same branches. dungeongen's model only reaches
+    # what a link connects, so a corridor running off to stairs, a dead end or
+    # the map edge was left for the overlay to ink on top as a bare line -
+    # 10ft wide ones came out as a solid black rectangle rather than a
+    # corridor with walls. dungeongen draws them properly if it's simply told
+    # about them: a passage may end somewhere that isn't a room, and its
+    # adapter joins one up to whatever Exit sits beside its end.
+    #
+    # The far end is a synthetic id that is deliberately not a room, which
+    # also keeps `add_passage` from rejecting the second branch off a room
+    # that has two - it discards duplicates by room *pair*, so every branch
+    # needs a distinct one.
+    link_points = {
+        (round(px_, 3), round(py_, 3)) for link in island["links"] for px_, py_ in link["points"]
+    }
+    for index, corridor in enumerate(island["corridors"]):
+        points = _dedupe(corridor["points"])
+        if len(points) < 2:
+            continue
+        if (round(points[0][0], 3), round(points[0][1], 3)) in link_points:
+            continue  # part of a room-to-room link, already drawn above
+        waypoints = _pad_single_cell(_grid_cell_path(points))
+        if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
+            continue
+        dungeon.add_passage(_DGPassage(
+            start_room=f"branch{index}a", end_room=f"branch{index}b",
+            waypoints=waypoints, width=1,
+        ))
+
     return dungeon
 
 

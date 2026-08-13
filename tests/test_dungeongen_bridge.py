@@ -37,13 +37,21 @@ def test_build_dungeongen_dungeon_matches_room_and_link_counts():
     island = islands[0]
     dg = bridge.build_dungeongen_dungeon(island)
     assert len(dg.rooms) == len(island["rooms"])
-    # every link with both ends resolved to a real room becomes exactly one passage
+    # every link with both ends resolved to a real room becomes exactly one
+    # passage. Counted over room-to-room passages only: dead-end branches are
+    # handed to dungeongen as passages too, with a synthetic far end that is
+    # deliberately not a room, so they are not links and must not be counted.
+    room_ids = {f"r{room['id']}" for room in island["rooms"]}
     resolvable_links = [
         link for link in island["links"]
         if any(r["id"] == link["from_room"] for r in island["rooms"])
         and any(r["id"] == link["to_room"] for r in island["rooms"])
     ]
-    assert len(dg.passages) <= len(resolvable_links)
+    room_to_room = [
+        p for p in dg.passages.values()
+        if p.start_room in room_ids and p.end_room in room_ids
+    ]
+    assert len(room_to_room) <= len(resolvable_links)
 
 
 def test_render_island_svg_offset_places_a_room_correctly():

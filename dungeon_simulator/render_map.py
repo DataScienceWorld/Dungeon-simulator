@@ -352,7 +352,15 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     # start from, off the door markers placed on them, and off the icons that
     # cap them. Running them through the same cell conversion the passages use
     # puts all of it in one grid.
-    corridor_cells = {id(c): _bridge._grid_cell_path(c["points"]) for c in island["corridors"]}
+    # Padded to two points for the same reason a single-cell passage is: a
+    # corridor short enough to live inside one cell is still a corridor, and a
+    # <polyline> with a single point draws nothing at all. Repeating the point
+    # gives a zero-length segment, which the square linecap below renders as
+    # the one cell it occupies.
+    corridor_cells = {
+        id(c): _bridge._pad_single_cell(_bridge._grid_cell_path(c["points"]))
+        for c in island["corridors"]
+    }
     cell_at_endpoint: dict[tuple, tuple] = {}
     for corridor in island["corridors"]:
         cells = corridor_cells[id(corridor)]
@@ -472,18 +480,10 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             return (cx1 + (1 if dx > 0 else 0), cy1 + 0.5), (1 if dx > 0 else -1, 0)
         return (cx1 + 0.5, cy1 + (1 if dy > 0 else 0)), (0, 1 if dy > 0 else -1)
 
-    for corridor in island["corridors"]:
-        if _covered(corridor["points"][0][0], corridor["points"][0][1]):
-            continue  # part of a room-to-room link dungeongen already drew
-        stroke_w = max(corridor.get("width", 0.5) * scale, 3)
-        route = " ".join(
-            f"{x},{y}" for x, y in
-            (px(cx + 0.5, cy + 0.5) for cx, cy in corridor_cells[id(corridor)])
-        )
-        parts.append(
-            f'<polyline points="{route}" fill="none" stroke="{_DG_INK}" '
-            f'stroke-width="{stroke_w}" stroke-linecap="square" stroke-linejoin="miter" />'
-        )
+    # No corridors are drawn here any more. dungeongen is now told about the
+    # branches it used to know nothing about (see build_dungeongen_dungeon),
+    # so it draws every corridor on the map with real walls; inking a line on
+    # top of that would only cover its floor with a black bar.
 
     for door in island["doors"]:
         (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
