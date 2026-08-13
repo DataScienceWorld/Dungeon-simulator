@@ -183,3 +183,26 @@ def test_short_links_still_become_passages():
                         if len(bridge._grid_cell_path(bridge._dedupe(link["points"]))) == 1:
                             seen_single_cell = True
     assert seen_single_cell, "expected at least one link short enough to occupy a single cell"
+
+
+def test_dungeongen_rooms_never_overlap_each_other():
+    """Our own layout guarantees rooms don't overlap. The minimum-size floor
+    that makes a 10ft room legible must not overrun that guarantee: grown into
+    a neighbour it draws two rooms on top of each other (observed on seed 72,
+    where a 10ft circular room 5ft from its neighbour grew a full cell into
+    it). Where there is no space to grow, the room stays its true size."""
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                dg = bridge.build_dungeongen_dungeon(island)
+                rects = [
+                    (r.x, r.y, r.x + r.width, r.y + r.height) for r in dg.rooms.values()
+                ]
+                for i, a in enumerate(rects):
+                    for b in rects[i + 1:]:
+                        assert not bridge._cell_rects_overlap(a, b), (
+                            f"seed {seed}: dungeongen rooms {a} and {b} overlap"
+                        )

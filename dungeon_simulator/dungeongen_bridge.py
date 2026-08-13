@@ -85,6 +85,12 @@ def _dedupe(points: list[tuple]) -> list[tuple]:
     return deduped
 
 
+def _cell_rects_overlap(a, b) -> bool:
+    """Whether two half-open cell rects share any cell. Touching along an edge
+    is not an overlap - that's two rooms sharing a wall, which is fine."""
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
 def _is_axis_aligned_path(waypoints) -> bool:
     return all(a[0] == b[0] or a[1] == b[1] for a, b in zip(waypoints, waypoints[1:]))
 
@@ -303,11 +309,30 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
 
     dungeon = _DGDungeon()
     room_bounds: dict[int, tuple] = {}  # our room id -> (dg_id, x0, y0, x1, y1)
+    # Every room's honest cell rect, in island order, so the size floor below
+    # can tell whether growing one would run into a neighbour.
+    true_rects = []
     for room in island["rooms"]:
         xs = [c[0] for c in room["corners"]]
         ys = [c[1] for c in room["corners"]]
         x0, y0, x1, y1 = _grid(min(xs)), _grid(min(ys)), _grid(max(xs)), _grid(max(ys))
-        width, height = max(1, x1 - x0), max(1, y1 - y0)
+        true_rects.append((x0, y0, x0 + max(1, x1 - x0), y0 + max(1, y1 - y0)))
+    rects = list(true_rects)
+    # Cells the map's own corridors run through. A room may not be grown over
+    # one: the corridor leaving a room starts at that room's real wall, so
+    # growing that way swallows its first cell and draws the room straight
+    # over the passage it connects to.
+    route_cells: set[tuple] = set()
+    for route in [*island["corridors"], *island["links"]]:
+        points = _dedupe(route["points"])
+        if len(points) >= 2:
+            route_cells.update(_grid_cell_path(points))
+
+    for index, room in enumerate(island["rooms"]):
+        x0, y0, x1, y1 = rects[index]
+        width, height = x1 - x0, y1 - y0
+        dg_id = f"r{room['id']}"
+        shape_name = _SHAPE_MAP.get(room["shape"], "RECT")
         if width < _MIN_ROOM_GRID_UNITS or height < _MIN_ROOM_GRID_UNITS:
             # Some legitimate rolls (e.g. the Room Table's smallest circular
             # room, 10ft diameter) are exactly as wide as a standard corridor.
@@ -315,11 +340,49 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # the corridor rather than a recognizable room. This only inflates
             # dungeongen's background art - the room's real recorded
             # dimensions, log text, and layout math are untouched.
+            #
+            # But only where there is actually space to grow into. Our own
+            # layout guarantees rooms don't overlap at their real sizes;
+            # inflating one regardless overruns that guarantee and draws it
+            # straight through a neighbour - a 10ft room 5ft from a wall grew
+            # a full cell into the room next door. Where it doesn't fit, the
+            # room is drawn at its true size instead: small, but correct.
+            grown_w = max(width, _MIN_ROOM_GRID_UNITS)
+            grown_h = max(height, _MIN_ROOM_GRID_UNITS)
+            if shape_name == "CIRCLE":
+                grown_w = grown_h = max(grown_w, grown_h)
+            # Centred on the room is the ideal, but a neighbour on one side
+            # doesn't have to cost the room its legibility - it can grow away
+            # from that side instead. Every placement that still *contains*
+            # the room's true footprint is a candidate (so its walls, and the
+            # doors punched in them, stay where the room actually is), tried
+            # nearest-to-centred first.
             cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-            width, height = max(width, _MIN_ROOM_GRID_UNITS), max(height, _MIN_ROOM_GRID_UNITS)
-            x0, y0 = round(cx - width / 2), round(cy - height / 2)
-        dg_id = f"r{room['id']}"
-        shape_name = _SHAPE_MAP.get(room["shape"], "RECT")
+            ideal_x, ideal_y = cx - grown_w / 2, cy - grown_h / 2
+            candidates = [
+                (gx0, gy0)
+                for gx0 in range(x1 - grown_w, x0 + 1)
+                for gy0 in range(y1 - grown_h, y0 + 1)
+            ]
+            candidates.sort(key=lambda c: (abs(c[0] - ideal_x) + abs(c[1] - ideal_y)))
+            others = [other for i, other in enumerate(rects) if i != index]
+            # Corridor cells already inside the room's own footprint are its
+            # own doorway and don't count against it.
+            blocked = {
+                cell for cell in route_cells
+                if not (x0 <= cell[0] < x1 and y0 <= cell[1] < y1)
+            }
+            for gx0, gy0 in candidates:
+                grown = (gx0, gy0, gx0 + grown_w, gy0 + grown_h)
+                if any(_cell_rects_overlap(grown, other) for other in others):
+                    continue
+                if any(gx0 <= cx_ < gx0 + grown_w and gy0 <= cy_ < gy0 + grown_h
+                       for cx_, cy_ in blocked):
+                    continue
+                rects[index] = grown
+                x0, y0 = gx0, gy0
+                width, height = grown_w, grown_h
+                break
         if shape_name == "CIRCLE" and width != height:
             # dungeongen rejects a circle whose width and height differ (it
             # raises, and the whole level falls back to the plainer renderer).
@@ -328,6 +391,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # one of its sides; squaring it off to the larger side keeps the
             # room drawn, and only affects dungeongen's own background art.
             width = height = max(width, height)
+            rects[index] = (x0, y0, x0 + width, y0 + height)
         dungeon.add_room(_DGRoom(
             x=x0, y=y0, width=width, height=height,
             shape=getattr(_DGRoomShape, shape_name), z=0, id=dg_id, number=room["id"],
