@@ -16,6 +16,34 @@ Optional dependency: if dungeongen (or its skia-python dependency) isn't
 importable - it needs system graphics libraries that aren't guaranteed to
 be present everywhere - `available()` returns False and callers should
 fall back to the pure-SVG/RoughJS renderer in render_map.py.
+
+TODO (pending cleanup, not done as part of the grid-native layout change):
+layout.py now quantizes every measurement to whole 10ft cells as it walks
+the tree, so every coordinate this module receives is already an integer.
+That makes several things in here partly or fully redundant:
+
+  - _grid() is now just `int(v)` for any real input - the "round a half
+    cell up" logic it documents can no longer trigger, because layout.py
+    never hands it a .5 any more.
+  - _cell_span/_grid_cell_path's whole reason to exist was reconciling a
+    *continuous* lattice coordinate against dungeongen's *cell* coordinate
+    (a room wall at x=14 vs. a 5ft hop to x=14.5, etc.) - with integer
+    input in, they degenerate to near-identity passthroughs.
+  - _pad_single_cell, and the placed-inflation search in
+    build_dungeongen_dungeon (trying offsets to grow a small room without
+    overlapping a neighbour or a corridor cell) may still be doing real
+    work - inflation and neighbour-avoidance are still meaningful even
+    with integer input - but that needs checking function by function,
+    not assumed.
+
+Don't rip this out reflexively "because it's dead now": some of it
+probably still is doing something, and the failure mode here (this
+exact bridge, this exact session) has repeatedly been "looks obviously
+redundant, turns out to matter for one specific island shape" - see the
+git history for the number of rounds that took. When this gets done, it
+needs the same treatment as every fix above: a before/after measurement
+across a real seed sweep (room/link counts, the hang-safety loop, seed
+72 checked visually), not just "tests still pass locally".
 """
 
 from __future__ import annotations
