@@ -148,6 +148,44 @@ def test_corridor_points_have_no_consecutive_duplicates():
                         assert a != b, f"seed {seed}: corridor {corridor['id']} has a zero-length segment"
 
 
+def test_no_corridor_or_link_segment_runs_diagonally():
+    """Every segment has to be axis-aligned. A diagonal is not a corridor:
+    dungeongen routes cell by cell and cannot follow one, and the fallback
+    renderer draws it as a line cutting across whatever is in between.
+
+    They used to come from a "stretch our last point to meet the child" rule,
+    written for a time when a room that didn't fit was pushed along until it
+    did. Rooms are not pushed any more, and the only node kind that ever
+    answers with a position other than the one it was handed is a passage,
+    which reports the far end of everything it walked - so the rule only ever
+    fired on the one case where it was wrong, dragging a trunk's last point
+    across the map.
+
+    Verified to fail on the state before that removal: 34 diagonal segments
+    over this same sweep, and not only the `stretch*` corridors it created -
+    trunk corridors were bent too, because the rule rewrote their last point
+    in place."""
+    checked = 0
+    for seed in range(60):
+        for max_depth in (None, 5):
+            kwargs = {"seed": seed, "limitless_room_cap": 20}
+            if max_depth is not None:
+                kwargs["max_depth"] = max_depth
+            dungeon = DungeonGenerator(**kwargs).generate()
+            layout = compute_layout(dungeon)
+            for islands in layout.values():
+                for island in islands:
+                    for route in [*island["corridors"], *island.get("links", [])]:
+                        points = route["points"]
+                        for a, b in zip(points, points[1:]):
+                            checked += 1
+                            assert a[0] == b[0] or a[1] == b[1], (
+                                f"seed {seed} (max_depth={max_depth}): "
+                                f"{route['id']} runs diagonally from {a} to {b}"
+                            )
+    assert checked > 4000  # the sweep really did walk the map, not an empty layout
+
+
 def test_root_island_is_flagged_as_entrance():
     dungeon = DungeonGenerator(seed=3).generate()
     layout = compute_layout(dungeon)

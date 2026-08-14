@@ -251,3 +251,132 @@ def test_rooms_are_not_drawn_wider_than_they_are():
                     checked += 1
     assert checked, "expected at least one room to check"
 
+
+
+def _passage_cells(dg):
+    cells = set()
+    for passage in dg.passages.values():
+        cells |= bridge._path_cells(list(passage.waypoints))
+    return cells
+
+
+def test_every_corridor_the_layout_drew_reaches_dungeongen():
+    """A corridor that dungeongen is never told about is simply not on the
+    map: nothing else draws it (the overlay stopped inking corridors of its
+    own), so the branch it belongs to vanishes into the rock.
+
+    A corridor may legitimately be skipped when it is already covered - a
+    room-to-room link and the corridors it is made of are the same geometry
+    handed over twice. What decides that has to be the *cells*, though. The
+    old test was "does this corridor's first point coincide with a point of
+    some link", and a four-way intersection is precisely where that lies: its
+    arms leave from a cell the through-route passes through, so the arms were
+    dropped as already-drawn while nothing drew them.
+
+    Verified to fail on the state before the fix - seed 72's four-way lost
+    its north arm - and across 40 seeds the fix adds 38 cells over 14 islands
+    while losing none."""
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                drawn = _passage_cells(bridge.build_dungeongen_dungeon(island))
+                for corridor in island["corridors"]:
+                    points = bridge._dedupe(corridor["points"])
+                    if len(points) < 2:
+                        continue
+                    want = bridge._path_cells(
+                        bridge._pad_single_cell(bridge._grid_cell_path(points))
+                    )
+                    missing = want - drawn
+                    assert not missing, (
+                        f"seed {seed}: corridor {corridor['id']} covers {sorted(want)} "
+                        f"but dungeongen was never told about {sorted(missing)}"
+                    )
+
+
+def test_a_four_way_intersection_reaches_dungeongen_with_all_four_arms():
+    """Seed 72, level 1: passage 13 runs west and ends in a four-way. The
+    junction cell is (14,15); the through-route enters from (15,15) and
+    carries on west to (13,15), and the two side arms occupy the cells
+    directly north and south of the junction.
+
+    Pinned as its own case because the sweep above only proves no corridor is
+    missing - this states what the crossing itself has to look like once it
+    gets there, which is what the map is actually judged on."""
+    dungeon = DungeonGenerator(seed=72).generate()
+    island = compute_layout(dungeon)[1][0]
+    cells = _passage_cells(bridge.build_dungeongen_dungeon(island))
+    for arm, cell in [
+        ("l'incrocio", (14, 15)),
+        ("il tronco da est", (15, 15)),
+        ("il proseguimento a ovest", (13, 15)),
+        ("il braccio nord", (14, 14)),
+        ("il braccio sud", (14, 16)),
+    ]:
+        assert cell in cells, f"{arm} {cell} non arriva a dungeongen"
+
+
+def test_the_four_way_is_one_connected_region_in_dungeongens_own_model():
+    """Reaching dungeongen is not the same as being drawn as a crossing.
+
+    Its adapter calls a cell a crossing only when two passages *occupy the
+    same cell*: it splits both there and connects the pieces. An arm that
+    merely runs up against the flank of the through-route shares no cell with
+    it, so the adapter treats them as unrelated, puts them in separate
+    connected regions, and inks a wall between - the arm renders as a sealed
+    stub beside the crossing.
+
+    Asked of dungeongen itself rather than of the picture: Map's own
+    _trace_connected_region walks what is actually reachable. All five cells
+    of seed 72's four-way have to come back in one region.
+
+    Verified to fail without _claim_takeoff_cell: the two side arms came back
+    as regions of their own."""
+    from dungeongen.constants import CELL_SIZE
+
+    dungeon = DungeonGenerator(seed=72).generate()
+    island = compute_layout(dungeon)[1][0]
+    dg = bridge.build_dungeongen_dungeon(island)
+    dungeon_map = bridge._convert_dungeon(dg, show_numbers=False)
+
+    visited, regions = set(), []
+    for element in dungeon_map._elements:
+        if element in visited:
+            continue
+        region = []
+        dungeon_map._trace_connected_region(element, visited, region)
+        regions.append(region)
+
+    # dungeongen re-normalises to its own Dungeon.bounds
+    bx, by = dg.bounds[0], dg.bounds[1]
+
+    def regions_at(gx, gy):
+        mx = (gx - bx) * CELL_SIZE + CELL_SIZE / 2
+        my = (gy - by) * CELL_SIZE + CELL_SIZE / 2
+        found = set()
+        for i, region in enumerate(regions):
+            for element in region:
+                b = getattr(element, "bounds", None)
+                if b and b.x <= mx <= b.x + b.width and b.y <= my <= b.y + b.height:
+                    found.add(i)
+                    break
+        return found
+
+    cells = {
+        "l'incrocio": (14, 15),
+        "il tronco da est": (15, 15),
+        "il proseguimento a ovest": (13, 15),
+        "il braccio nord": (14, 14),
+        "il braccio sud": (14, 16),
+    }
+    at = {name: regions_at(*cell) for name, cell in cells.items()}
+    for name, found in at.items():
+        assert found, f"{name} {cells[name]} non e' coperto da nessun elemento"
+    shared = set.intersection(*at.values())
+    assert shared, (
+        "i bracci del quadrivio non sono nella stessa regione connessa: "
+        + ", ".join(f"{n} in {sorted(r)}" for n, r in at.items())
+    )

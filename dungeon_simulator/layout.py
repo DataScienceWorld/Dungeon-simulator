@@ -41,8 +41,12 @@ ROOM_MARGIN = 0.0  # rooms may share a wall, they just may not overlap. A gap is
 # least one whole cell of its own, so it is the passage that separates them. Demanding a
 # further clear cell only rejected real placements - a room reached through a door that sits
 # against a neighbour's wall has nowhere else to be, and was simply dropped instead. Across
-# 60 seeds x 2 depths, dropping the requirement places 649 rooms rather than 565, with the
-# unplaceable ones down from 9% to 5% and still no two rooms overlapping.
+# 60 seeds x 2 depths, dropping the requirement places 594 rooms of 684 rather than 548, with
+# the unplaceable ones down from 19.9% to 13.2% and still no two rooms overlapping.
+# Any margin at all costs the same: coordinates are whole cells, so anything in (0, 1] rejects
+# exactly the placements that share a wall, and 0.5 and 1.0 measure identically.
+# (Re-measure with __pycache__ cleared - flipping this constant does not change the file's
+# size, so a same-second edit can leave a stale .pyc in place and every value read as 0.0.)
 _CAP_STUB_LENGTH = 1.0  # length of the little corridor stub drawn before a dead-end/edge cap
 _NOTABLE_SLIDE_UNITS = 2.0  # 20ft - an offset at least this large gets called out in the log
 
@@ -287,11 +291,17 @@ class _Layout:
 
     def _enter(self, child, x: float, y: float, heading: str, level: int, island: dict,
                force_new_island: bool, path: "_Path"):
-        """Walk into `child`. Returns the (x, y) actually used for its entry point -
-        which may be further along `heading` than requested if a room had to be
-        pushed clear of something already on the map. Crossing into a new island
-        (different level, or an explicit portal jump) never affects this island's
-        coordinates, so the original (x, y) is echoed back unchanged."""
+        """Walk into `child`, starting it at (x, y) facing `heading`. Crossing
+        into a new island (a different level, or an explicit portal jump) starts
+        that island at its own origin instead.
+
+        The (x, y) that comes back is where the walk *ended up*, which is only
+        meaningful for a passage (the far end of everything it walked) - no
+        caller uses it, and none should start: it used to be read as "where the
+        child actually put its entry point", back when a room that didn't fit
+        was pushed along the heading until it did. Rooms are never pushed now,
+        so nothing downstream needs reconciling, and reading a passage's far end
+        as an entry point is what drew diagonals across the map."""
         if force_new_island or child.level != level:
             new_island = self._add_island(child.level)
             self._walk(child, 0.0, 0.0, "N", child.level, new_island, _Path(None, (0.0, 0.0)))
@@ -317,18 +327,16 @@ class _Layout:
             path.points.append((nx, ny))
             path.doors.append(door)
             for child in node.children:
-                ax, ay = self._enter(child, nx, ny, heading, level, island, False, path)
-                if (ax, ay) != (nx, ny):
-                    # Whatever's beyond (usually a room) had to be pushed
-                    # clear of something else already on the map. Stretching
-                    # the door's own glyph to bridge that gap would draw one
-                    # absurdly long "door" - a door is a single fixture, not
-                    # a corridor - so the gap gets its own plain connecting
-                    # corridor instead, and the door stays its real size.
-                    island["corridors"].append({
-                        "id": f"stretch{node.id}", "points": [(nx, ny), (ax, ay)],
-                        "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "lines": [],
-                    })
+                # No gap can open up here to be bridged. This used to append a
+                # connecting corridor when the child came back at a different
+                # spot, because a room that didn't fit was pushed along until
+                # it did. Rooms are never pushed now - one that doesn't fit is
+                # simply not placed - and a room reports back the entry it was
+                # handed, unchanged. The only node kind that ever answers with
+                # a different position is a passage, which reports the far end
+                # of everything it walked; joining the door to *that* drew a
+                # diagonal across the map, which is not a corridor at all.
+                self._enter(child, nx, ny, heading, level, island, False, path)
             return x, y
         if kind == "stairs":
             length = _cells(node.geo.get("length_ft", 10))
@@ -625,18 +633,22 @@ class _Layout:
                     bx += (1 if bdx > 0 else 0) - (1 if tdx > 0 else 0)
                     by += (1 if bdy > 0 else 0) - (1 if tdy > 0 else 0)
                 child_path = path.branch((bx, by)) if turn is not None else path
-                ax, ay = self._enter(child, bx, by, child_heading, level, island,
-                                      bool(event.get("portal")), child_path)
+                self._enter(child, bx, by, child_heading, level, island,
+                            bool(event.get("portal")), child_path)
+                # Nothing to reconcile after the child: it is walked from the
+                # point we handed it and the trunk has not moved. There used to
+                # be a "stretch our last point to meet the child" branch here,
+                # for a time when a room that didn't fit was pushed along the
+                # heading until it did. Rooms are never pushed now - one that
+                # doesn't fit is not placed at all - and instrumenting _enter
+                # over the seed sweep showed the *only* kind that ever answers
+                # with a different position is a passage, which reports the far
+                # end of everything it walked. Stretching to that dragged the
+                # trunk's last point across the map and left it diagonal to the
+                # one before it, which is not a corridor and is exactly what
+                # dungeongen cannot route.
                 if event.get("portal"):
                     island["portals"].append({"id": node.id, "x": x, "y": y, "lines": node.lines})
-                elif turn is None and (ax, ay) != (x, y):
-                    # A same-direction terminal dispatch (door/stairs/room/shaft) got
-                    # pushed clear of something else - stretch our own last point to
-                    # meet it. Branch takeoffs (turn is not None) never need this: the
-                    # branch is a separate corridor that fixes up its own trailing
-                    # point the same way, and the trunk itself hasn't moved.
-                    runs[-1]["points"][-1] = (ax, ay)
-                    x, y = ax, ay
         for child in children:  # any child without a matching event (shouldn't normally happen)
             had_child = True
             ensure_min_length()

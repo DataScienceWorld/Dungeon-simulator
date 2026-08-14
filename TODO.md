@@ -73,7 +73,7 @@ actually goes, not from a comparison against the room's centre.
 
 ## 4. Passage intersections (feature, not a bug)
 
-Requested behaviour, not implemented at all yet. When a passage runs into
+Requested behaviour, only partly implemented. When a passage runs into
 something already on the map, it should connect there rather than stop, and
 the log should say so. Draw order decides which of the three cases applies:
 
@@ -83,6 +83,16 @@ the log should say so. Draw order decides which of the three cases applies:
   an additional entrance to it, a secret one;
 - a **passage crossing another passage** → that branch finishes generating,
   and the two form a crossing.
+
+The machinery for the third case now exists but is only used at a branch's
+*takeoff*. `_claim_takeoff_cell` extends a branch back one cell so it shares
+the cell it leaves from, because dungeongen's adapter only calls a cell a
+crossing when two passages occupy the same cell - short of that it walls them
+apart. A branch that runs into another corridor at its *far* end still gets
+no such treatment, so a crossing the generator never declared is still drawn
+as two separate corridors. The same helper should extend to that end once the
+layout decides what an arriving passage means (an intersection to record in
+the log, not just cells to merge).
 
 ## 5. One link in 211 still meets its rooms only at a corner
 
@@ -118,4 +128,12 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - no room exit sits off its own wall
 - every room is drawn, or says in the log why it isn't, or sits behind a node
   that does
+- no corridor or link segment runs diagonally
+- every corridor the layout drew reaches dungeongen (or is already covered,
+  cell for cell, by something that did)
 - no dungeongen hangs across the seed sweep
+
+Measured at the state this list was last rewritten, 60 seeds x 2 depths:
+684 rooms, 90 of them unplaceable (13.2%), 26370 coordinates, 4300 segments,
+886 room pairs, 1073 exits - all five checks clean. Hang sweep: 932 islands,
+0 hangs, 189 refusals which are all the deliberate size guard.

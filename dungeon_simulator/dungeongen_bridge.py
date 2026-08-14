@@ -211,6 +211,56 @@ def _grid_cell_path(points: list[tuple]) -> list[tuple]:
     return _dedupe(cells)
 
 
+def _path_cells(waypoints: list[tuple]) -> set[tuple]:
+    """Every cell a waypoint path occupies, not just the corners it turns at.
+
+    Waypoints name the bends; the cells in between are just as much part of
+    the corridor, and telling whether a second corridor is already covered
+    means comparing the *whole* run, not the endpoints."""
+    cells: set[tuple] = set()
+    for (ax, ay), (bx, by) in zip(waypoints, waypoints[1:]):
+        if ax == bx:
+            cells.update((ax, y) for y in range(min(ay, by), max(ay, by) + 1))
+        elif ay == by:
+            cells.update((x, ay) for x in range(min(ax, bx), max(ax, bx) + 1))
+        else:  # never produced by _grid_cell_path, but don't silently drop it
+            cells.update(((ax, ay), (bx, by)))
+    if waypoints:
+        cells.add(waypoints[0])
+    return cells
+
+
+def _claim_takeoff_cell(waypoints: list[tuple], drawn_cells: set[tuple]) -> list[tuple]:
+    """Extend a branch back one cell so it shares the cell it takes off from.
+
+    dungeongen's adapter only calls a cell a crossing when two passages
+    *occupy the same cell*: it splits both there and connects the pieces. A
+    branch that merely runs up against the flank of another corridor shares no
+    cell with it, so the adapter sees two unrelated passages, puts them in
+    separate connected regions, and draws a wall between them - the arm of a
+    four-way came out as a sealed stub beside the crossing rather than part of
+    it.
+
+    Our own geometry already says the branch starts on that boundary: the arm
+    leaves from the lattice point where the trunk is standing, and the cell
+    immediately behind its first cell, along its own direction of travel, is
+    the trunk's. Claiming it states that, and the adapter then draws the
+    crossing.
+
+    Only the cell directly behind the first one counts. A branch that happens
+    to run alongside some other corridor touches its cells too, and joining
+    those would knock a hole in a wall the map never said was open."""
+    (fx, fy), (nx, ny) = waypoints[0], waypoints[1]
+    back = (fx - _sign(nx - fx), fy - _sign(ny - fy))
+    if back == waypoints[0] or back not in drawn_cells:
+        return waypoints
+    return [back, *waypoints]
+
+
+def _sign(v: int) -> int:
+    return (v > 0) - (v < 0)
+
+
 def _pad_single_cell(cells: list[tuple]) -> list[tuple]:
     """Two rooms only 5ft apart are joined by a corridor that genuinely fits
     inside a single 10ft cell, so its cell path is one cell long. That is a
@@ -453,6 +503,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         room_bounds[room["id"]] = (dg_id, x0, y0, x0 + width, y0 + height)
 
     covered_exits: set[tuple] = set()
+    drawn_cells: set[tuple] = set()  # cells dungeongen has already been told to open
     for link in island["links"]:
         from_info = room_bounds.get(link["from_room"])
         to_info = room_bounds.get(link["to_room"])
@@ -485,6 +536,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         passage = _DGPassage(start_room=from_id, end_room=to_id, waypoints=waypoints, width=1)
         if not dungeon.add_passage(passage):
             continue  # duplicate room pair or self-loop - skip rather than crash
+        drawn_cells |= _path_cells(waypoints)
 
         start_pt, end_pt = waypoints[0], waypoints[-1]
         dungeon.add_door(_DGDoor(
@@ -532,22 +584,33 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
     # also keeps `add_passage` from rejecting the second branch off a room
     # that has two - it discards duplicates by room *pair*, so every branch
     # needs a distinct one.
-    link_points = {
-        (round(px_, 3), round(py_, 3)) for link in island["links"] for px_, py_ in link["points"]
-    }
+    #
+    # Whether a corridor is already drawn is decided on the *cells it covers*,
+    # against what was actually handed over above. Testing whether its first
+    # point coincides with some link's point (what this used to do) threw away
+    # exactly the corridors a junction is made of: at a four-way, the arms
+    # leave from a cell the through-route merely passes through, so all but the
+    # one whose first point happened to differ were dropped as "already drawn"
+    # when nothing drew them - the crossing rendered as a T with an arm
+    # missing. Comparing cells also catches the reverse case the old test
+    # missed, a corridor lying entirely under a link but starting elsewhere.
     for index, corridor in enumerate(island["corridors"]):
         points = _dedupe(corridor["points"])
         if len(points) < 2:
             continue
-        if (round(points[0][0], 3), round(points[0][1], 3)) in link_points:
-            continue  # part of a room-to-room link, already drawn above
         waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
             continue
-        dungeon.add_passage(_DGPassage(
+        cells = _path_cells(waypoints)
+        if cells <= drawn_cells:
+            continue
+        waypoints = _claim_takeoff_cell(waypoints, drawn_cells)
+        cells = _path_cells(waypoints)
+        if dungeon.add_passage(_DGPassage(
             start_room=f"branch{index}a", end_room=f"branch{index}b",
             waypoints=waypoints, width=1,
-        ))
+        )):
+            drawn_cells |= cells
 
     return dungeon
 
