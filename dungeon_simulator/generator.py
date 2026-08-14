@@ -296,19 +296,25 @@ class DungeonGenerator:
                     branch_dirs = ["left"]
                 elif tag == "branch_side_right":
                     branch_dirs = ["right"]
-                else:
-                    # A T-junction and a four-way intersection both open onto
-                    # a *perpendicular* corridor, i.e. both left and right -
-                    # a four-way additionally keeps going forward (handled by
-                    # falling through to `continue` below), a T doesn't (it
-                    # returns instead of looping back for another trunk
-                    # segment - there is no "forward" at a T).
+                elif tag == "branch_t":
+                    # A T-junction opens onto a perpendicular corridor - left
+                    # and right - and there is no "forward" at a T.
                     branch_dirs = ["left", "right"]
+                else:
+                    # A four-way has *three* ways on from here. Forward used
+                    # to be folded back into this same passage instead of
+                    # being one of them, which is not what an intersection
+                    # is: in the log the entry read "comes to a four-way
+                    # intersection" and then simply carried on with its own
+                    # next roll, so the third arm was nowhere to be found and
+                    # the passage appeared to turn at a crossroads. All three
+                    # arms are branches, and the passage ends here.
+                    branch_dirs = ["left", "right", None]
                 for branch_dir in branch_dirs:
                     child = self.dispatch_beyond("passage", level, depth=depth + 1)
                     node.children.append(child)
                     events.append({"type": "child", "turn": branch_dir})
-                if tag == "branch_t":
+                if tag in ("branch_t", "branch_four_way"):
                     return
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
