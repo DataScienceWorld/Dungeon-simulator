@@ -171,6 +171,13 @@ _HTML_STYLE = """
     --slate: #8c93a3; --slate-ink: #12141b;
   }
 
+  /* The app centres itself in a 46rem column, so on a wide screen the page
+     behind it shows through. Painting the same ground on body keeps those
+     margins part of the map rather than whatever the host happens to be:
+     embedded in a dark page, a transparent body left a light column of
+     dungeon floating on a dark surround. */
+  body { background: var(--bg); margin: 0; }
+
   .dg-app, .dg-app * { box-sizing: border-box; }
   .dg-app {
     background: var(--bg);
