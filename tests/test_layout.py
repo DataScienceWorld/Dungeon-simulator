@@ -204,17 +204,56 @@ def _first_room_node(node):
 
 
 def test_render_map_section_escapes_content_and_has_svg():
+    """Log text reaches the page two different ways and neither may let it
+    become markup: through dungeongen's overlay it is escaped into SVG
+    <title> elements, and through the RoughJS fallback it is JSON fed to
+    `textContent`. A "</script>" in a room's log line must not be able to
+    close one of our own script tags early either way.
+
+    Asserted as "the payload never comes back through intact" rather than by
+    counting closing tags. The old test pinned that count at exactly 3, which
+    stopped meaning anything the moment every level started rendering through
+    dungeongen: there were then no script tags at all, and a count of 0 would
+    have satisfied a test whose whole point was that the injected one is
+    absent. Counting `<script` openings is no good either - the escaped
+    payload legitimately contains one, inert, inside a JSON string."""
+    payload = '</script><script>alert(1)</script>'
+    for seed in (81, 7):
+        dungeon = DungeonGenerator(seed=seed).generate()
+        room = _first_room_node(dungeon.root)
+        assert room is not None
+        room.lines.append(payload)
+        html = render_map_section(dungeon)
+        assert "<svg" in html
+        assert payload not in html, (
+            f"seed {seed}: the injected payload came back verbatim, so its "
+            f"'</script>' can close whatever block it landed in"
+        )
+        assert "alert(1)" in html, (
+            f"seed {seed}: the log text vanished entirely - escaped is the point, "
+            f"dropped is a different bug"
+        )
+
+
+def test_render_map_section_escapes_content_in_the_roughjs_fallback(monkeypatch):
+    """The same, pinned on the fallback specifically. It is the path that
+    embeds log text in a <script> block, so it is the one an injected
+    "</script>" could actually break out of - and it is now rare enough
+    (levels only fall back when an island is too big for dungeongen) that the
+    test above can no longer be relied on to exercise it."""
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    monkeypatch.setattr(bridge, "_IMPORT_ERROR", RuntimeError("forced off for this test"))
     dungeon = DungeonGenerator(seed=81).generate()
     room = _first_room_node(dungeon.root)
     assert room is not None
     room.lines.append('</script><script>alert(1)</script>')
     html = render_map_section(dungeon)
-    assert "<svg" in html
-    # Room/corridor/door/stairs content only ever reaches the page as JSON
-    # fed through `textContent`, never as raw HTML - so injecting a
-    # "</script>" must not be able to close our own data/vendor/render
-    # <script> tags early. There are exactly 3 legitimate closing tags.
-    assert html.count("</script>") == 3
+    assert "<script" in html  # the fallback really is the path under test
+    assert '</script><script>alert(1)</script>' not in html
+    # JSON-escaped, so the sequence that would terminate our block is broken up
+    assert r"<\/script>" in html
+    assert "alert(1)" in html
 
 
 def test_render_map_section_never_crashes_across_many_seeds():

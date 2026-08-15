@@ -1,9 +1,15 @@
+import html as _html
+
 import pytest
 
 from dungeon_simulator import dungeongen_bridge as bridge
 from dungeon_simulator.generator import DungeonGenerator
 from dungeon_simulator.layout import compute_layout
-from dungeon_simulator.render_map import _dungeongen_level_svg, render_map_section
+from dungeon_simulator.render_map import (
+    _dungeongen_level_svg,
+    _full_text,
+    render_map_section,
+)
 
 pytestmark = pytest.mark.skipif(not bridge.available(), reason="dungeongen (or skia-python) is not installed here")
 
@@ -89,13 +95,56 @@ def test_dungeongen_level_svg_returns_none_for_oversized_island():
     pytest.skip("no island with rooms found for seed 1")
 
 
-def test_dungeongen_level_svg_returns_none_when_any_island_has_no_rooms():
-    empty_island = {
-        "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [],
-        "caps": [{"id": 1, "x": 0.0, "y": 0.0, "kind": "dead_end", "lines": []}],
-        "links": [], "origin": (0.0, 0.0), "is_entrance": True,
-    }
-    assert _dungeongen_level_svg([empty_island]) is None
+def test_a_level_with_a_room_less_island_still_gets_dungeongen_art():
+    """A room-less island - a dead end, or a stub behind a stairs/portal jump
+    that went nowhere - used to drop the *entire level* to the RoughJS
+    renderer. Those islands are the majority (54% of islands across 40 seeds),
+    so most levels never got dungeongen's art: 35% did before this, 100% after.
+
+    The island itself has to survive the change, which is the part worth
+    pinning: its dead-end and stairs markers live only in the overlay, and an
+    island quietly left out of the composition would take them with it."""
+    dungeon = DungeonGenerator(seed=72).generate()
+    layout = compute_layout(dungeon)
+    level, islands = next(
+        (lv, isl) for lv, isl in sorted(layout.items())
+        if any(not i["rooms"] for i in isl) and any(i["rooms"] for i in isl)
+    )
+    result = _dungeongen_level_svg(islands)
+    assert result is not None, f"level {level} still falls back despite fitting"
+
+    checked = 0
+    for island in islands:
+        if island["rooms"]:
+            continue
+        # A cap's marker is labelled with its own id - deliberately not with
+        # its log text, which is what the id is there to let you look up.
+        for cap in island["caps"]:
+            assert f'>#{cap["id"]}</text>' in result["svg"], (
+                f"a '{cap['kind']}' marker (#{cap['id']}) on the room-less island "
+                f"is not in the composed SVG"
+            )
+            checked += 1
+        for stair in island["stairs"]:
+            assert f'L{stair.get("to_level")}' in result["svg"], (
+                "a stairs marker on the room-less island is not in the composed SVG"
+            )
+            checked += 1
+    assert checked, "expected the room-less island to carry at least one marker"
+
+
+def test_a_level_of_nothing_but_room_less_islands_renders_too():
+    """The degenerate end of the same case, and the one that exercises our own
+    normalization on its own: with no rooms anywhere, dungeongen's adapter
+    normalizes by a placeholder box and leaves the island at its raw grid
+    position - which for an island late in a level is thousands of map units
+    out, past a limit its native side answers with a segfault."""
+    dungeon = DungeonGenerator(seed=72).generate()
+    layout = compute_layout(dungeon)
+    islands = next(
+        isl for _, isl in sorted(layout.items()) if all(not i["rooms"] for i in isl)
+    )
+    assert _dungeongen_level_svg(islands) is not None
 
 
 def test_render_map_section_uses_dungeongen_when_it_fits():

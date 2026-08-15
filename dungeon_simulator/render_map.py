@@ -555,13 +555,14 @@ def _dungeongen_level_svg(islands: list[dict]) -> dict | None:
     the RoughJS renderer in that case."""
     if not _bridge.available() or not islands:
         return None
-    if any(not island["rooms"] for island in islands):
-        # An island with no rooms at all (just a dead end, or a stub reached
-        # via a stairs/portal jump that went nowhere) has nothing for
-        # dungeongen to draw - its Dungeon.bounds falls back to a meaningless
-        # placeholder box, unrelated to where our own overlay markers really
-        # are. Simpler and safer to render the whole level with RoughJS.
-        return None
+    # An island with no rooms at all - a dead end, or a stub reached by a
+    # stairs/portal jump that went nowhere - is drawn like any other now.
+    # It used to drop the *whole level* to the RoughJS renderer, and such
+    # islands are common enough that most levels never got dungeongen's art
+    # at all. What made them a special case was that dungeongen's adapter
+    # normalizes by `Dungeon.bounds`, which is computed from rooms alone and
+    # is a placeholder box when there are none; render_island_svg now does
+    # that normalization itself in exactly that case.
     if not all(_bridge.fits_size_limit(island) for island in islands):
         return None
 

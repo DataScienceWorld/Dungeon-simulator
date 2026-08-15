@@ -10,33 +10,34 @@ otherwise; re-measure before trusting them, the numbers move.
 
 ---
 
-## 1. One empty island drops the whole level to the fallback renderer
+## 1. ~~One empty island drops the whole level to the fallback renderer~~ (done)
 
-`_dungeongen_level_svg` returns `None` if **any** island on the level has no
-rooms, so the level falls back to the RoughJS renderer. Islands with no rooms
-are common: a stairs or portal branch that never reaches a room becomes one.
+Fixed. Across 40 seeds, levels drawn by dungeongen went **35% → 100%**; 54% of
+islands (162 of 299) have no rooms, which is why one bail cost so much.
 
-Seed 72, explored fully (no `--max-depth`), 40 rooms across 5 levels:
+What made a room-less island a special case: dungeongen's adapter normalizes
+what it is given by `-Dungeon.bounds[0]`, and `Dungeon.bounds` is computed from
+**rooms alone** - with none it is a placeholder box at the origin, so the island
+was rendered at its raw grid position. Islands sit side by side, so a late one
+lands thousands of map units out and trips dungeongen's internal ±3200 limit,
+which on the native side is a **segfault**, not an exception.
+`render_island_svg` now does that normalization itself in exactly that case.
 
-| level | rooms | islands | empty | dungeongen art |
-|-------|-------|---------|-------|----------------|
-| -1    | 1     | 2       | 1     | no             |
-| 0     | 1     | 4       | 3     | no             |
-| 1     | 21    | 3       | 1     | no             |
-| 2     | 6     | 16      | 10    | no             |
-| 3     | 1     | 1       | 0     | **yes**        |
+Two things found on the way, both real:
 
-One level out of five, and not because of size - purely because of empty
-islands. Across 40 seeds only ~32% of levels get dungeongen's art.
+- `island_extent_map_units` measured rooms and links only, so a room-less
+  island - all corridors - reported an extent of zero and walked straight past
+  the crash guard. It measures everything handed over now.
+- It was also seeded with the origin, so it measured *distance from the
+  origin* rather than the island's own size, and refused perfectly renderable
+  islands late in a level. Everything is normalized before dungeongen sees it,
+  so only the size can trip the limit. Size-guard refusals over the sweep:
+  189 → 4.
 
-This is the single biggest lever on how much of the map gets the good
-rendering. Options: skip empty islands when handing the level over, or let
-the overlay draw them on its own.
-
-Watch out: `test_dungeongen_level_svg_returns_none_when_any_island_has_no_rooms`
-encodes today's behaviour on purpose and has to be rewritten, not deleted -
-whatever replaces it still has to guarantee the stairs/dead-end markers on
-those islands don't silently vanish.
+Cost: the pages got heavy. Seed 72 goes 289 KB → 5.3 MB, because dungeongen's
+art is vector hatching and there is now a lot more of it. Over 20 seeds: median
+1.48 MB, max 6.3 MB (seed 14), none near the 16 MB artifact ceiling, and a page
+still loads in ~0.24s locally. Worth revisiting if it grows - see item 7.
 
 ## 2. The doorway glyph eats the first cell of a corridor
 
@@ -105,16 +106,17 @@ Already written up in that module's own docstring - see the `TODO (pending
 cleanup...)` block there for which functions are affected and why this must
 not be ripped out reflexively.
 
-## 7. Cost of a passage continuing past a side opening
+## 7. ~~Cost of a passage continuing past a side opening~~ (absorbed by item 1)
 
 Making a wall feature a side branch (rather than a turn of the trunk) means
-the passage carries on past it, which explores more of the dungeon. Measured
-over 40 seeds: rooms 343 → 350, islands 242 → 315 (empty ones 129 → 180),
-levels drawn by dungeongen 38% → 32%.
+the passage carries on past it, which explores more of the dungeon. The cost
+measured at the time was almost entirely the extra empty islands it created:
+levels drawn by dungeongen 38% → 32%. Item 1 removed that penalty
+entirely - empty islands no longer cost a level its art - so this is closed.
 
-Mostly a restatement of item 1 - the cost is almost entirely the extra empty
-islands - so fixing that should absorb this too. Worth re-measuring afterwards
-rather than assuming.
+What remains of it is page weight, not coverage: more islands drawn means more
+SVG, which is the 5.3 MB in item 1. If that becomes the problem, the lever is
+dungeongen's own hatching density, not how the passage branches.
 
 ---
 
@@ -131,9 +133,14 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - no corridor or link segment runs diagonally
 - every corridor the layout drew reaches dungeongen (or is already covered,
   cell for cell, by something that did)
-- no dungeongen hangs across the seed sweep
+- no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
 684 rooms, 90 of them unplaceable (13.2%), 26370 coordinates, 4300 segments,
-886 room pairs, 1073 exits - all five checks clean. Hang sweep: 932 islands,
-0 hangs, 189 refusals which are all the deliberate size guard.
+886 room pairs, 1073 exits - all five checks clean. Hang sweep: 2086 islands,
+0 hangs, 4 refusals which are all the deliberate size guard.
+
+Run the hang sweep with **empty islands included**. It used to skip them
+(`if not island["rooms"]: continue`) - which is exactly where the segfault in
+item 1 was hiding, so the sweep that was supposed to catch it never looked.
+That is also why the island count jumped from 932 to 2086.

@@ -626,16 +626,78 @@ _MAX_MAP_UNITS = 2800  # comfortably under the ~3200 limit, padding+inflation in
 
 def island_extent_map_units(island: dict) -> float:
     """The island's own footprint in dungeongen map units (grid units * CELL_SIZE),
-    ignoring padding - i.e. how close a render of it would come to the crash limit."""
+    ignoring padding - i.e. how close a render of it would come to the crash limit.
+
+    Measures everything that gets handed over, not just rooms and links. A
+    room-less island is all corridors, so measuring rooms and links alone
+    reported an extent of zero for it and waved it straight past the guard -
+    and dungeongen's native side does not raise on an oversized shape, it
+    segfaults. Seed 72's level 2 has such an island."""
     from dungeongen.constants import CELL_SIZE
-    xs, ys = [0.0], [0.0]
+    # Deliberately not seeded with the origin. Everything handed to dungeongen
+    # is normalized first - by its own adapter for a room-bearing island, by us
+    # for a room-less one - so what can trip its limit is how big the island is,
+    # not how far along the level it happens to sit. Seeding with 0.0 measured
+    # the distance from the origin instead, which grows with every island placed
+    # to the left and refused perfectly renderable ones near the end of a level.
+    xs: list[float] = []
+    ys: list[float] = []
     for room in island["rooms"]:
         for cx, cy in room["corners"]:
             xs.append(cx); ys.append(cy)
-    for link in island["links"]:
-        for px, py in link["points"]:
+    for route in [*island["links"], *island["corridors"]]:
+        for px, py in route["points"]:
             xs.append(px); ys.append(py)
+    for door in island["doors"]:
+        xs += [door["x1"], door["x2"]]
+        ys += [door["y1"], door["y2"]]
+    for group in ("stairs", "portals", "caps"):
+        for item in island[group]:
+            xs.append(item["x"]); ys.append(item["y"])
+    if not xs:
+        return 0.0
     return max(max(xs) - min(xs), max(ys) - min(ys)) * SCALE * CELL_SIZE
+
+
+def _island_min_cell(island: dict) -> tuple[int, int]:
+    """The lowest cell the island occupies, by the same conversion the
+    passages use - what has to come off its coordinates to sit at the origin."""
+    xs, ys = [], []
+    for route in [*island["links"], *island["corridors"]]:
+        for px, py in route["points"]:
+            xs.append(_grid(px)); ys.append(_grid(py))
+    for room in island["rooms"]:
+        for cx, cy in room["corners"]:
+            xs.append(_grid(cx)); ys.append(_grid(cy))
+    return (min(xs) if xs else 0, min(ys) if ys else 0)
+
+
+def _translated_island(island: dict, dx: int, dy: int) -> dict:
+    """A copy of the island moved by (dx, dy) whole grid units.
+
+    Only the geometry `build_dungeongen_dungeon` reads is copied and moved;
+    everything else is shared, because the copy exists solely to be handed to
+    dungeongen and thrown away. The caller keeps using the original, so the
+    overlay's coordinates never move."""
+    moved = dict(island)
+    moved["rooms"] = [
+        {**room, "corners": [(cx + dx, cy + dy) for cx, cy in room["corners"]]}
+        for room in island["rooms"]
+    ]
+    for key in ("links", "corridors"):
+        moved[key] = [
+            {**route, "points": [(px + dx, py + dy) for px, py in route["points"]]}
+            for route in island[key]
+        ]
+    moved["doors"] = [
+        {**door, "x1": door["x1"] + dx, "y1": door["y1"] + dy,
+         "x2": door["x2"] + dx, "y2": door["y2"] + dy}
+        for door in island["doors"]
+    ]
+    moved["room_exits"] = [
+        {**ex, "x": ex["x"] + dx, "y": ex["y"] + dy} for ex in island.get("room_exits", [])
+    ]
+    return moved
 
 
 def fits_size_limit(island: dict) -> bool:
@@ -671,6 +733,21 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
         raise ValueError("island exceeds dungeongen's safe rendering size - caller should fall back")
 
     dg_dungeon = build_dungeongen_dungeon(island)
+    shift_x = shift_y = 0
+    if not dg_dungeon.rooms:
+        # dungeongen's adapter normalizes what it is given by `-Dungeon.bounds[0]`,
+        # and `Dungeon.bounds` is computed from rooms alone - with no rooms it is a
+        # placeholder box at the origin, so nothing is normalized and the island is
+        # rendered at its raw grid position. Islands are laid out side by side, so a
+        # late one sits thousands of map units out and trips dungeongen's internal
+        # +/-3200 limit, which on the native side is a segfault rather than an
+        # exception. Doing the normalization ourselves puts it back at the origin;
+        # the shift is then undone in the returned offset, exactly like the adapter's
+        # own.
+        shift_x, shift_y = _island_min_cell(island)
+        if shift_x or shift_y:
+            island = _translated_island(island, -shift_x, -shift_y)
+            dg_dungeon = build_dungeongen_dungeon(island)
     dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
     bounds = dg_map.bounds
     pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells, dg_map.options.map_border_cells)
@@ -687,6 +764,8 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
         os.unlink(path)
     px_per_grid_unit = SCALE * CELL_SIZE
     dg_min_x, dg_min_y, _, _ = dg_dungeon.bounds  # the very shift the adapter applied
-    off_x = pad_x - bounds.x - dg_min_x * CELL_SIZE
-    off_y = pad_y - bounds.y - dg_min_y * CELL_SIZE
+    # ...plus whatever we normalized away above, which the adapter then saw as
+    # already at the origin and left alone. Both are undone the same way.
+    off_x = pad_x - bounds.x - (dg_min_x + shift_x) * CELL_SIZE
+    off_y = pad_y - bounds.y - (dg_min_y + shift_y) * CELL_SIZE
     return svg, off_x, off_y, px_per_grid_unit, width, height
