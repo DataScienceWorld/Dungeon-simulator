@@ -652,17 +652,18 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
             continue
         cells = _path_cells(waypoints)
-        # Claimed *before* asking whether this corridor is already drawn, not
-        # after. Corridors are listed in the order the walk finished them, so a
-        # grandchild is appended before the arm it hangs off: the grandchild
-        # claimed the arm's only cell, the arm then looked entirely covered and
-        # was dropped - taking with it the one thing that joined the crossing
-        # to its own trunk.
-        waypoints = _claim_takeoff_cell(
+        claimed = _claim_takeoff_cell(
             waypoints, route_cells - cells, island.get("_takeoff", {}).get(corridor["id"]))
-        cells = _path_cells(waypoints)
-        if cells <= drawn_cells:
+        # "Already drawn" is about the cells, but a corridor that claims its
+        # takeoff cell is carrying something the cells cannot express: the join
+        # between itself and its trunk. Two passages can cover the same cell
+        # and still be strangers to each other - which is exactly what a
+        # crossing must not be - so a corridor that claims is always handed
+        # over, and only one that claims nothing can be dropped as redundant.
+        if claimed is waypoints and cells <= drawn_cells:
             continue
+        waypoints = claimed
+        cells = _path_cells(waypoints)
         if dungeon.add_passage(_DGPassage(
             start_room=f"branch{index}a", end_room=f"branch{index}b",
             waypoints=waypoints, width=1,

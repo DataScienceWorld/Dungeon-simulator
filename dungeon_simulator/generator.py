@@ -70,6 +70,9 @@ class DungeonGenerator:
         self.target_rooms = 0
         self.node_count = 0
         self._queue: deque = deque()
+        self._root: Node | None = None
+        self._rooms_this_wave: list[Node] = []
+        self._cancelled: set[int] = set()
 
     # -- bookkeeping ---------------------------------------------------
 
@@ -119,9 +122,25 @@ class DungeonGenerator:
         node.lines = [self._edge_reason(depth)]
 
     def _run_queue(self) -> None:
+        """Drain the queue one breadth-first wave at a time, checking after
+        each whether the rooms it produced can actually be placed.
+
+        A room that fits nowhere is not on the map, and exploring past it
+        spends the room budget on branches nobody will ever see: over 40 seeds
+        it was 1038 nodes of 3003 (34.6%), and 87 of the 136 rooms that never
+        reached the map existed only because an unplaceable ancestor was
+        explored anyway. Cutting there hands that budget back to branches that
+        can be drawn.
+
+        The check has to happen between waves rather than at the end, because
+        by the end the dice are already spent. It is a judgement made on the
+        tree so far: the final layout walks a bigger tree and can occasionally
+        disagree, which is why the room's own entry, not this, remains the
+        record of whether it is drawn."""
         while self._queue:
-            job = self._queue.popleft()
-            job()
+            for _ in range(len(self._queue)):
+                self._queue.popleft()()
+            self._cut_unplaceable_rooms()
 
     def dispatch_beyond(self, kind: str, level: int, modifier: int = 0, depth: int = 0) -> Node:
         """Resolve whatever lies beyond a passage/door/stairs, respecting the
@@ -166,7 +185,16 @@ class DungeonGenerator:
 
     def _enqueue(self, level: int, fill, *args) -> Node:
         node = Node(id=self._id(), kind="pending", level=level)
-        self._queue.append(lambda: fill(node, *args))
+
+        def job():
+            # The node may have been cut from the tree since this was queued -
+            # it hung off a room that turned out to have nowhere to go. Filling
+            # it would roll dice for a branch nobody can reach.
+            if node.id in self._cancelled:
+                return
+            fill(node, *args)
+
+        self._queue.append(job)
         return node
 
     def resolve_secret_door(self, level: int, modifier: int = 0, depth: int = 0) -> Node:
@@ -190,6 +218,43 @@ class DungeonGenerator:
         self._queue.append(lambda: setattr(child, "lines", prefix + child.lines))
         return child
 
+    def _cut_unplaceable_rooms(self) -> None:
+        rooms, self._rooms_this_wave = self._rooms_this_wave, []
+        if not rooms or self._root is None:
+            return
+        from .layout import compute_layout
+
+        probe = Dungeon(
+            dungeon_type="", size_label="", target_rooms=self.target_rooms,
+            seed=self.seed, root=self._root,
+        )
+        placed = {
+            room["id"]
+            for islands in compute_layout(probe, quiet=True).values()
+            for island in islands
+            for room in island["rooms"]
+        }
+        for room in rooms:
+            if room.id in placed:
+                continue
+            self._cut_children(room)
+            room.lines.append(
+                "[Layout] Non c'e' spazio sulla mappa per questa stanza: le sue altre uscite "
+                "non vengono esplorate, perche' porterebbero a stanze e passaggi che nessuno "
+                "puo' raggiungere. Il tiro e il contenuto di questa stanza restano nel registro."
+            )
+
+    def _cut_children(self, node: Node) -> None:
+        """Drop everything hanging off `node` and cancel the work queued for it."""
+        for child in node.children:
+            for descendant in child.walk():
+                self._cancelled.add(descendant.id)
+                self.node_count -= 1
+        node.children = []
+        # The exits list is walked in step with the children, so it goes too -
+        # an exit that leads nowhere is not an exit anyone can use.
+        node.geo["exit_slots"] = []
+
     # -- top level -------------------------------------------------------
 
     def generate(self) -> Dungeon:
@@ -209,6 +274,8 @@ class DungeonGenerator:
             id=self._id(), kind="start", level=1,
             lines=[f"Dungeon type: {dungeon_type}", f"Size: {size_note}"],
         )
+
+        self._root = root
 
         start_val, start_entry = STARTING_AREA_TABLE.roll(self.dice)
         start_kind = start_entry.payload
@@ -540,6 +607,7 @@ class DungeonGenerator:
         node.lines = [f"[Room d20={shape['roll']}] {shape['text']}"]
         node.geo.update({"width_ft": shape["dims"][0], "length_ft": shape["dims"][1], "shape": shape.get("shape", "rect")})
         self.rooms_created += 1
+        self._rooms_this_wave.append(node)
         extra_exits = max(0, shape["exits"] - 1)
         node.lines.append(
             f"Exits: {shape['exits']} ({extra_exits} beyond the way in)."

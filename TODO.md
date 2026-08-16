@@ -111,17 +111,21 @@ inside its own `_convert_passage` splitting, and it is what
 `test_the_four_way_is_one_connected_region_in_dungeongens_own_model` stops
 short of asserting.
 
-## 5. Rooms that find nowhere to go are up to 20.3%
+## 5. Rooms that find nowhere to go are 19.4%
 
-140 of 688 (60 seeds x 2 depths), from 13.2% earlier in this work. Two things
-pushed it: the wall-feature rows now let a passage carry on past a door
-(longer passages, more crowding), and a room is no longer placed on ground a
-corridor already occupies - see item 4 for both.
+136 of 701 (60 seeds x 2 depths). Each says so in its own log entry, which is
+the invariant that matters, but they are still rooms the dice rolled that the
+map does not show.
 
-Each one says so in its own log entry, which is the invariant that matters,
-but they are still rooms the dice rolled that the map does not show. The
-margin is not the lever (it is already 0); the lever is how little freedom a
-room has - it only ever tries positions along the wall it was entered from.
+The budget they waste is now largely recovered: the generator checks
+placement between breadth-first waves and stops exploring past a room that
+fits nowhere, so nodes sitting behind one went 34.6% to 4.6% and 47 more
+rooms are actually drawn. What is left of that 4.6% is the judgement made on
+the partial tree disagreeing with the final layout, which walks a bigger one.
+
+The margin is not the lever (already 0); the lever is how little freedom a
+room has - it only ever tries positions along the wall it was entered from,
+so shortening its corridor or letting it sit further along would find space.
 
 ## 6. One link in 211 still meets its rooms only at a corner
 
@@ -167,13 +171,15 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
   *open* door in dungeongen merges their regions and erases it)
 - a passage rolled with no length of its own says in the log that it still
   takes the minimum 10ft
+- a room that fits nowhere has no children: the branches beyond it are never
+  explored, and its own entry says so
 - no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
-688 rooms, 140 of them unplaceable (20.3%), 24732 coordinates, 3982 segments,
-809 room pairs, 1136 exits, 142 links - all clean. Corridor cells inside a
-room's floor: 1.27%. Hang sweep: 1630 islands, 0 hangs, 2 size refusals.
-Levels drawn by dungeongen: 126 of 126 (100%).
+701 rooms, 136 of them unplaceable (19.4%), 24354 coordinates, 3806 segments,
+824 room pairs, 1177 exits, 151 links - all clean. Corridor cells inside a
+room's floor: 1.69%. Hang sweep: 1580 islands, 0 hangs, 2 size refusals.
+Levels drawn by dungeongen: 117 of 117 (100%).
 
 Run the hang sweep with **empty islands included**. It used to skip them
 (`if not island["rooms"]: continue`) - which is exactly where the segfault in

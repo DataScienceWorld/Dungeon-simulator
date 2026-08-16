@@ -127,7 +127,7 @@ _NOT_DRAWN = (
 )
 
 
-def _mark_branch_not_drawn(node) -> None:
+def _mark_branch_not_drawn(node, quiet: bool = False) -> None:
     """Say, on every entry beyond a branch that was cut, that it isn't drawn.
 
     When a room can't be placed - or a wall has no cell left for another
@@ -138,6 +138,8 @@ def _mark_branch_not_drawn(node) -> None:
     discover it is not on the map at all. Everything the dice produced stays
     in the log either way; what this adds is that each entry states its own
     status rather than relying on a note somewhere above it."""
+    if quiet:
+        return
     for child in node.children:
         for descendant in child.walk():
             if descendant.kind in ("room", "passage", "door", "stairs"):
@@ -377,8 +379,19 @@ class _Path:
 
 
 class _Layout:
-    def __init__(self):
+    def __init__(self, quiet: bool = False):
+        # `quiet` runs the whole walk without writing a word into the log.
+        # The generator needs to ask "would this room fit?" while it is still
+        # building the tree, which means walking the partial tree once per
+        # breadth-first wave - and every one of those walks would otherwise
+        # append its notes again, so a room would end up explaining itself a
+        # dozen times over.
+        self.quiet = quiet
         self.levels: dict[int, list[dict]] = {}
+
+    def _note(self, node, text: str) -> None:
+        if not self.quiet:
+            node.lines.append(text)
 
     def _add_island(self, level: int) -> dict:
         island = _new_island()
@@ -567,19 +580,21 @@ class _Layout:
             # reach - it simply isn't placed, and the branch stops here as if
             # it had dead-ended. The room's own roll, contents and children
             # stay in the tree and in the log; only the map loses it.
-            node.lines.append(
+            self._note(
+                node,
                 "[Layout] Non c'e' spazio sulla mappa per posizionare questa stanza senza "
                 "sovrapposizioni - il ramo si interrompe qui (il contenuto resta comunque nel registro)."
             )
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
-            _mark_branch_not_drawn(node)
+            _mark_branch_not_drawn(node, self.quiet)
             return x, y
 
         # The doorway keeps the position the corridor arrived at; the room is
         # what moved, so nothing before it has to stretch.
         mid_x, mid_y = x + px * lateral, y + py * lateral
         if abs(lateral) >= _NOTABLE_SLIDE_UNITS:
-            node.lines.append(
+            self._note(
+                node,
                 f"[Layout] L'ingresso di questa stanza si apre a circa {round(abs(lateral) * FT_PER_UNIT)}ft "
                 "dal centro della parete, invece che al centro: la stanza e' stata spostata di lato per non "
                 "sovrapporsi ad altre gia' presenti sulla mappa, mantenendo pero' la posizione della porta."
@@ -656,12 +671,13 @@ class _Layout:
             wall_cells = int(round(rx1 - rx0 if along_x else ry1 - ry0))
             cell = _banded_wall_offset(index, count, wall_cells, child.id)
             if cell is None:
-                child.lines.append(
+                self._note(
+                    child,
                     "[Layout] La parete di questa stanza non ha abbastanza spazio per un'altra "
                     "apertura da 10ft - il ramo si interrompe qui (il contenuto resta comunque "
                     "nel registro)."
                 )
-                _mark_branch_not_drawn(child)
+                _mark_branch_not_drawn(child, self.quiet)
                 continue
             # The wall the exit faces, then the cell along it. Both read off
             # the room's box, so the result never depends on which way the
@@ -755,7 +771,8 @@ class _Layout:
                 # body - and where a "widens"/"narrows" roll comes before any
                 # movement, it is also the first of the two 10ft stretches
                 # that end up drawn.
-                node.lines.append(
+                self._note(
+                    node,
                     f"[Layout] Il tiro non dava lunghezza propria al passaggio: sulla mappa "
                     f"percorre comunque il minimo di {round(FT_PER_UNIT)}ft "
                     f"prima di cio' che segue."
@@ -904,7 +921,8 @@ class _Layout:
                     {"room_id": room_id, "x": stop[0], "y": stop[1],
                      "direction": wall, "secret": True}
                 )
-                node.lines.append(
+                self._note(
+                    node,
                     f"[Layout] Questo passaggio arriva contro la parete {wall} della stanza "
                     f"#{room_id}, gia' disegnata sulla mappa: vi si apre come ingresso segreto "
                     f"e il ramo si interrompe qui (il contenuto resta comunque nel registro)."
@@ -914,7 +932,8 @@ class _Layout:
                 # own floor, because whatever dispatched it was already in
                 # there. There is no breach to punch - it is simply somewhere
                 # the map has no room for.
-                node.lines.append(
+                self._note(
+                    node,
                     f"[Layout] Questo passaggio parte gia' dentro la stanza #{room_id}, "
                     f"gia' disegnata sulla mappa: non viene tracciato e il ramo si interrompe "
                     f"qui (il contenuto resta comunque nel registro)."
@@ -923,10 +942,11 @@ class _Layout:
             # ran into the room are on the map already, and marking the whole
             # node's subtree told 43 rooms across the sweep that they were not
             # drawn while they plainly were.
-            for remaining in ([pending] if pending is not None else []) + list(children):
-                for descendant in remaining.walk():
-                    if descendant.kind in ("room", "passage", "door", "stairs"):
-                        descendant.lines.append(_NOT_DRAWN)
+            if not self.quiet:
+                for remaining in ([pending] if pending is not None else []) + list(children):
+                    for descendant in remaining.walk():
+                        if descendant.kind in ("room", "passage", "door", "stairs"):
+                            descendant.lines.append(_NOT_DRAWN)
         for i, run in enumerate(runs):
             # A "turn" records a point without moving (it just changes heading
             # in place), so a passage that turns before its first move - or one
@@ -1023,9 +1043,11 @@ def _drop_caps_inside_rooms(island: dict) -> None:
     ]
 
 
-def compute_layout(dungeon) -> dict[int, list[dict]]:
-    """Return {level: [island, ...]} with islands translated so they never overlap."""
-    layout = _Layout()
+def compute_layout(dungeon, quiet: bool = False) -> dict[int, list[dict]]:
+    """Return {level: [island, ...]} with islands translated so they never overlap.
+
+    `quiet` walks without writing anything into the log - see _Layout."""
+    layout = _Layout(quiet)
     layout.walk_root(dungeon.root)
 
     for islands in layout.levels.values():

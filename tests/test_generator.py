@@ -176,6 +176,13 @@ def test_every_room_exit_records_its_door_roll():
                 continue
             recorded = [_EXIT_ROLL.match(line) for line in node.lines]
             recorded = [m for m in recorded if m]
+            if any("non vengono esplorate" in line for line in node.lines):
+                # The room turned out to have nowhere to go, so its exits were
+                # cut rather than explored. The rolls stay in the log - they
+                # happened - but there are no children left to match them
+                # against.
+                assert not node.children
+                continue
             assert len(recorded) == len(node.children), (
                 f"seed {seed} room #{node.id}: {len(node.children)} exits but "
                 f"{len(recorded)} rolls recorded"
@@ -268,3 +275,45 @@ def test_a_wall_feature_that_lets_the_passage_carry_on_forks_in_two():
                 )
                 ended += 1
     assert forked > 20 and ended > 20, f"forked {forked}, ended {ended}"
+
+
+def test_a_room_with_nowhere_to_go_does_not_have_its_branches_explored():
+    """A room that fits nowhere is not on the map, and exploring past it
+    spends the room budget on branches nobody will ever see. Over 40 seeds it
+    was 1038 nodes of 3003 (34.6%), and 87 of the 136 rooms that never reached
+    the map existed only because an unplaceable ancestor was explored anyway.
+
+    The generator now checks placement between breadth-first waves and cuts
+    there, which hands that budget back: 4.6% of nodes behind an unplaced
+    room, 9 such rooms, and 47 more rooms actually drawn.
+
+    Both halves are pinned: the cut room really has no children left, and its
+    own entry says why - the rolls that produced it stay in the log, it is the
+    exploration past it that stops."""
+    from dungeon_simulator.layout import compute_layout
+
+    cut = behind = total_nodes = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        placed = {
+            room["id"] for islands in compute_layout(dungeon).values()
+            for island in islands for room in island["rooms"]
+        }
+        nodes = list(dungeon.all_nodes())
+        total_nodes += len(nodes)
+        for node in nodes:
+            if node.kind != "room" or node.id in placed:
+                continue
+            behind += sum(1 for child in node.children for _ in child.walk())
+            if any("non vengono esplorate" in line for line in node.lines):
+                assert not node.children, (
+                    f"seed {seed}: room #{node.id} says its exits were not explored "
+                    f"but still has {len(node.children)} of them"
+                )
+                assert node.geo.get("exit_slots") == []
+                cut += 1
+    assert cut > 20, f"expected plenty of cut rooms, found {cut}"
+    # A judgement made on the tree so far, so the final layout can disagree
+    # and leave a little behind - but nothing like the third of the tree it
+    # used to be.
+    assert behind / total_nodes < 0.10, f"{behind} of {total_nodes} nodes behind unplaced rooms"
