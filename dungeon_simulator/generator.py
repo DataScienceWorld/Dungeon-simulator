@@ -545,7 +545,22 @@ class DungeonGenerator:
         for _ in range(extra_exits):
             slot = ("forward", "right", "left")[len(exit_slots) % 3]
             exit_slots.append(slot)
-            is_door = self.dice.chance(50)
+            # The Room Table's own rule: each exit gets a d100, 50% that it is
+            # a door, and a door then rolls on the Door Table.
+            #
+            # Written out rather than just acted on. The door case could be
+            # inferred from the child's own "[Door d100=...]" line, but the
+            # other two could not: an exit that came up a plain opening left no
+            # trace of having been rolled for at all, and neither did one whose
+            # child never got filled in because the room budget ran out first
+            # (436 of 1155 exits over 60 seeds).
+            value = self.dice.d100()
+            is_door = value <= 50
+            node.lines.append(
+                f"[Room d100={value} vs 50%] Exit {len(exit_slots)} of {extra_exits}: "
+                + ("a door - rolled on the Door Table." if is_door
+                   else "an open way through, no door.")
+            )
             node.children.append(self.dispatch_beyond("door" if is_door else "passage", level, depth=depth + 1))
         node.geo["exit_slots"] = exit_slots
 

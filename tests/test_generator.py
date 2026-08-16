@@ -150,3 +150,52 @@ def test_a_found_secret_door_hangs_off_a_wall_not_straight_ahead():
             )
             checked += 1
     assert checked, "expected at least one found secret door across the sweep"
+
+
+_EXIT_ROLL = _re.compile(r"\[Room d100=(\d+) vs 50%\] Exit (\d+) of (\d+): (a door|an open way)")
+
+
+def test_every_room_exit_records_its_door_roll():
+    """The Room Table's rule: each exit gets a d100, 50% that it is a door,
+    and a door then rolls on the Door Table.
+
+    The rule was being followed - 50.8% doors over 1178 rolls - but only the
+    door case left a trace, in the child's own "[Door d100=...]" line. An exit
+    that came up a plain opening recorded nothing, and neither did one whose
+    child was never filled in because the room budget ran out first, which is
+    436 of 1155 exits over 60 seeds. The roll decides what a room's wall
+    opens into, so it belongs in the room's own entry.
+
+    The outcome is checked against what was actually built, not just counted:
+    a roll of 50 or less has to produce a door."""
+    rolls = doors = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "room":
+                continue
+            recorded = [_EXIT_ROLL.match(line) for line in node.lines]
+            recorded = [m for m in recorded if m]
+            assert len(recorded) == len(node.children), (
+                f"seed {seed} room #{node.id}: {len(node.children)} exits but "
+                f"{len(recorded)} rolls recorded"
+            )
+            for match, child in zip(recorded, node.children):
+                value, said_door = int(match.group(1)), match.group(4) == "a door"
+                assert said_door == (value <= 50), (
+                    f"seed {seed} room #{node.id}: d100={value} but the entry says "
+                    f"{'a door' if said_door else 'no door'}"
+                )
+                rolls += 1
+                doors += said_door
+                # An exit whose child never got filled in - the room budget ran
+                # out - comes back as an edge, and either roll can end there.
+                if child.kind == "door":
+                    assert said_door, f"seed {seed}: a door where the roll said otherwise"
+                    assert any(line.startswith("[Door d100=") for line in child.lines), (
+                        f"seed {seed}: door #{child.id} never rolled on the Door Table"
+                    )
+                elif child.kind == "passage":
+                    assert not said_door, f"seed {seed}: a passage where the roll said door"
+    assert rolls > 500
+    assert 0.4 < doors / rolls < 0.6, f"{doors} doors out of {rolls} rolls"
