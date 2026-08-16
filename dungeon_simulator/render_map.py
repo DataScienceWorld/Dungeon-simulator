@@ -494,6 +494,27 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
         mx, my = px(mx_raw, my_raw)
         title = _html.escape(_full_text(door["lines"]))
+        if door.get("secret"):
+            # dungeongen cannot say "secret" on the path we render through -
+            # its adapter turns a secret door into an *open* one, which erases
+            # the very wall the door is hidden in. It goes over as a closed
+            # door so the wall survives, and the mark that makes it secret is
+            # drawn here: its own convention is a dashed line marked "S".
+            length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
+            perp_x, perp_y = -ddy / length, ddx / length
+            half = max(scale * 0.4, 10.0)
+            parts.append(
+                f'<line x1="{mx - perp_x * half}" y1="{my - perp_y * half}" '
+                f'x2="{mx + perp_x * half}" y2="{my + perp_y * half}" '
+                f'stroke="{_DG_INK}" stroke-width="5" stroke-dasharray="5 4" />'
+                f'<circle cx="{mx}" cy="{my}" r="11" fill="#fff" stroke="{_DG_INK}" stroke-width="3" />'
+                f'<text x="{mx}" y="{my + 6}" text-anchor="middle" '
+                f'font-family="ui-monospace, Menlo, monospace" font-size="15" font-weight="700" '
+                f'fill="{_DG_INK}">S</text>'
+                f'<rect x="{mx - 14}" y="{my - 14}" width="28" height="28" class="dg-map-hit">'
+                f"<title>Porta segreta. {title}</title></rect>"
+            )
+            continue
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door):
             # dungeongen drew a proper door glyph here, so drawing a rust bar
             # over it would just double-mark the same door - but its glyph

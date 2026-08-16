@@ -387,6 +387,11 @@ class _Layout:
         # append its notes again, so a room would end up explaining itself a
         # dozen times over.
         self.quiet = quiet
+        # Node ids whose subtree the walk never reaches. The generator asks for
+        # these so it can stop exploring branches that will not be drawn: what
+        # lies past a cut is rolled, counted against the room budget, and then
+        # thrown away by the renderer.
+        self.cut: set[int] = set()
         self.levels: dict[int, list[dict]] = {}
 
     def _note(self, node, text: str) -> None:
@@ -597,6 +602,7 @@ class _Layout:
             )
             island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
             _mark_branch_not_drawn(node, self.quiet)
+            self.cut.update(child.id for child in node.children)
             return x, y
 
         # The doorway keeps the position the corridor arrived at; the room is
@@ -688,6 +694,7 @@ class _Layout:
                     "nel registro)."
                 )
                 _mark_branch_not_drawn(child, self.quiet)
+                self.cut.update(grandchild.id for grandchild in child.children)
                 continue
             # The wall the exit faces, then the cell along it. Both read off
             # the room's box, so the result never depends on which way the
@@ -952,11 +959,13 @@ class _Layout:
             # ran into the room are on the map already, and marking the whole
             # node's subtree told 43 rooms across the sweep that they were not
             # drawn while they plainly were.
-            if not self.quiet:
-                for remaining in ([pending] if pending is not None else []) + list(children):
-                    for descendant in remaining.walk():
-                        if descendant.kind in ("room", "passage", "door", "stairs"):
-                            descendant.lines.append(_NOT_DRAWN)
+            for remaining in ([pending] if pending is not None else []) + list(children):
+                self.cut.add(remaining.id)
+                if self.quiet:
+                    continue
+                for descendant in remaining.walk():
+                    if descendant.kind in ("room", "passage", "door", "stairs"):
+                        descendant.lines.append(_NOT_DRAWN)
         for i, run in enumerate(runs):
             # A "turn" records a point without moving (it just changes heading
             # in place), so a passage that turns before its first move - or one
@@ -1053,12 +1062,16 @@ def _drop_caps_inside_rooms(island: dict) -> None:
     ]
 
 
-def compute_layout(dungeon, quiet: bool = False) -> dict[int, list[dict]]:
+def compute_layout(dungeon, quiet: bool = False, cut_out: set | None = None) -> dict[int, list[dict]]:
     """Return {level: [island, ...]} with islands translated so they never overlap.
 
-    `quiet` walks without writing anything into the log - see _Layout."""
+    `quiet` walks without writing anything into the log - see _Layout.
+    `cut_out`, if given, is filled with the ids of the nodes whose subtree the
+    walk never reaches."""
     layout = _Layout(quiet)
     layout.walk_root(dungeon.root)
+    if cut_out is not None:
+        cut_out.update(layout.cut)
 
     for islands in layout.levels.values():
         for island in islands:

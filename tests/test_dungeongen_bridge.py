@@ -69,6 +69,12 @@ def _find_four_way(seeds=range(40)):
                     arms = [corridors.get(c.id) for c in node.children]
                     if trunk is None or not all(arms):
                         continue
+                    # An arm that never got to move - it ran into something at
+                    # the moment it took off - is a single point, and nothing
+                    # draws it. The crossing to check is one that is actually
+                    # drawn, so those cases are not it.
+                    if any(len(bridge._dedupe(a[0]["points"])) < 2 for a in [trunk, *arms]):
+                        continue
                     junction = bridge._grid_cell_path(trunk[-1]["points"])[-1]
                     arm_cells = [bridge._grid_cell_path(a[0]["points"])[0] for a in arms]
                     # only the clean case: three distinct arms, each starting
@@ -137,7 +143,10 @@ def test_dungeongen_level_svg_returns_none_for_oversized_island():
     layout = compute_layout(dungeon)
     for islands in layout.values():
         for island in islands:
-            if not island["rooms"]:
+            # Two rooms at least: the guard measures the island's own extent,
+            # not how far from the origin it sits, so stretching it needs
+            # something to stretch *away from*.
+            if len(island["rooms"]) < 2:
                 continue
             oversized = dict(island)
             # push one room far away without touching the original fixture
@@ -146,7 +155,7 @@ def test_dungeongen_level_svg_returns_none_for_oversized_island():
             oversized["rooms"] = [far_room, *island["rooms"][1:]]
             assert _dungeongen_level_svg([oversized]) is None
             return
-    pytest.skip("no island with rooms found for seed 1")
+    pytest.skip("no island with two or more rooms found for seed 1")
 
 
 def test_a_level_with_a_room_less_island_still_gets_dungeongen_art():
@@ -494,8 +503,11 @@ def test_two_rooms_joined_by_a_door_keep_the_wall_between_them():
     of them came over OPEN. Seed 72's rooms 1 and 10 - joined by a *secret*
     door, of all things - were drawn merged.
 
-    A secret door also has to say so: dungeongen has a type for it, and a
-    secret door that reads as an opening is not a secret door.
+    A secret door goes over *closed* too, and deliberately so. dungeongen has
+    a SECRET type, but the webview adapter we render through folds it into an
+    open door - and an open door is not a glyph, it is a hole. Handing it over
+    honestly produced the one thing a secret door must not be: an opening,
+    with the wall it hides in erased. The overlay draws the "S" mark instead.
 
     The match works because the route records crossing the threshold. A door
     takes no cell of its own, so without that step the link's path stopped on
@@ -524,10 +536,34 @@ def test_two_rooms_joined_by_a_door_keep_the_wall_between_them():
                             f"joined by a door but it is handed over OPEN, which erases their wall"
                         )
                         if link["doors"][0].get("secret"):
-                            assert kind.name == "SECRET", (
-                                f"seed {seed}: a secret door came over as {kind.name}"
+                            assert kind.name == "CLOSED", (
+                                f"seed {seed}: a secret door came over as {kind.name}; "
+                                f"anything but CLOSED loses the wall it is hidden in"
                             )
                             secrets += 1
                         checked += 1
     assert checked > 50, f"expected plenty of door-only links, found {checked}"
     assert secrets, "expected at least one secret door among them"
+
+
+def test_a_secret_door_is_marked_by_the_overlay():
+    """Since dungeongen cannot draw one on this path, the map has to say
+    "secret" itself - otherwise a secret door is indistinguishable from any
+    other closed door, which is the opposite of useful."""
+    from dungeon_simulator.render_map import _dungeongen_overlay_for_island
+
+    found = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                secret = [d for d in island["doors"] if d.get("secret")]
+                if not secret:
+                    continue
+                overlay = _dungeongen_overlay_for_island(island, 0, 0, 64)
+                assert overlay.count("Porta segreta.") >= len(secret), (
+                    f"seed {seed}: {len(secret)} secret doors but the overlay marks fewer"
+                )
+                assert ">S</text>" in overlay
+                found += len(secret)
+    assert found, "expected at least one secret door across the sweep"

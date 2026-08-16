@@ -176,12 +176,13 @@ def test_every_room_exit_records_its_door_roll():
                 continue
             recorded = [_EXIT_ROLL.match(line) for line in node.lines]
             recorded = [m for m in recorded if m]
-            if any("non vengono esplorate" in line for line in node.lines):
+            if any("non vengono esplorate" in line or "non prosegue" in line
+                   for line in node.lines):
                 # The room turned out to have nowhere to go, so its exits were
                 # cut rather than explored. The rolls stay in the log - they
                 # happened - but there are no children left to match them
                 # against.
-                assert not node.children
+                assert len(node.children) < len(recorded)
                 continue
             assert len(recorded) == len(node.children), (
                 f"seed {seed} room #{node.id}: {len(node.children)} exits but "
@@ -230,7 +231,9 @@ def test_a_side_passage_forks_two_ways():
                 f"seed {seed} passage #{node.id}: a side passage should fork into the side "
                 f"and the way straight on, got {turns}"
             )
-            assert len(node.children) == len(turns)
+            # Children can be fewer than the ways on: a branch the map will
+            # never reach is cut, and its event stays behind in the log.
+            assert len(node.children) <= len(turns)
             checked += 1
     assert checked > 20, f"expected plenty of side passages, found {checked}"
 
@@ -289,7 +292,12 @@ def test_a_room_with_nowhere_to_go_does_not_have_its_branches_explored():
 
     Both halves are pinned: the cut room really has no children left, and its
     own entry says why - the rolls that produced it stay in the log, it is the
-    exploration past it that stops."""
+    exploration past it that stops.
+
+    The cut is not about rooms only. The layout also stops where a passage
+    runs into a room already drawn, where it begins inside one, and where a
+    room's wall has no cell left for another opening; it reports every one of
+    those, which is what takes the residue to zero."""
     from dungeon_simulator.layout import compute_layout
 
     cut = behind = total_nodes = 0
@@ -305,7 +313,8 @@ def test_a_room_with_nowhere_to_go_does_not_have_its_branches_explored():
             if node.kind != "room" or node.id in placed:
                 continue
             behind += sum(1 for child in node.children for _ in child.walk())
-            if any("non vengono esplorate" in line for line in node.lines):
+            if any("non vengono esplorate" in line or "non prosegue" in line
+                   for line in node.lines):
                 assert not node.children, (
                     f"seed {seed}: room #{node.id} says its exits were not explored "
                     f"but still has {len(node.children)} of them"
@@ -313,7 +322,9 @@ def test_a_room_with_nowhere_to_go_does_not_have_its_branches_explored():
                 assert node.geo.get("exit_slots") == []
                 cut += 1
     assert cut > 20, f"expected plenty of cut rooms, found {cut}"
-    # A judgement made on the tree so far, so the final layout can disagree
-    # and leave a little behind - but nothing like the third of the tree it
-    # used to be.
-    assert behind / total_nodes < 0.10, f"{behind} of {total_nodes} nodes behind unplaced rooms"
+    # Nothing at all, not "not much". The cut used to be judged on unplaceable
+    # rooms alone, which left 4.6% of the tree behind one - a room can also
+    # lose its footing later, and a branch can be stopped by a passage running
+    # into a room rather than by a room of its own. The layout reports every
+    # place it stops, so there is no residue.
+    assert behind == 0, f"{behind} of {total_nodes} nodes sit behind an unplaced room"

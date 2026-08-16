@@ -322,10 +322,20 @@ def _door_type_at(link: dict, end_cell: tuple) -> "_DGDoorType":
 
 
 def _door_kind(door: dict) -> "_DGDoorType":
-    """A secret door reads as a wall with a mark on it, not as an opening -
-    which is the whole point of one. dungeongen has a type for it; we were
-    handing every door over as merely closed."""
-    return _DGDoorType.SECRET if door.get("secret") else _DGDoorType.CLOSED
+    """Every door goes over closed, secret ones included.
+
+    dungeongen does have a SECRET type, and handing it over looks like the
+    right thing - but its webview adapter, which is the path we render
+    through, folds it straight into an *open* door:
+
+        door_type = DoorType.OPEN if layout_door_type in (OPEN, SECRET) ...
+
+    and an open door is not a glyph, it is a hole: its region tracing walks
+    through one, so the two sides merge and the wall between them is never
+    drawn. A secret door handed over honestly therefore came out as the one
+    thing a secret door must not be - an opening. Closed keeps the wall, and
+    the overlay draws the mark that says it is secret (see render_map.py)."""
+    return _DGDoorType.CLOSED
 
 
 def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:

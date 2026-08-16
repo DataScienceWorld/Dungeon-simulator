@@ -71,7 +71,7 @@ class DungeonGenerator:
         self.node_count = 0
         self._queue: deque = deque()
         self._root: Node | None = None
-        self._rooms_this_wave: list[Node] = []
+        self._produced_this_wave: list[Node] = []
         self._cancelled: set[int] = set()
 
     # -- bookkeeping ---------------------------------------------------
@@ -122,25 +122,22 @@ class DungeonGenerator:
         node.lines = [self._edge_reason(depth)]
 
     def _run_queue(self) -> None:
-        """Drain the queue one breadth-first wave at a time, checking after
-        each whether the rooms it produced can actually be placed.
+        """Drain the queue one breadth-first wave at a time, asking the layout
+        after each one what it cannot draw, and stopping there.
 
-        A room that fits nowhere is not on the map, and exploring past it
-        spends the room budget on branches nobody will ever see: over 40 seeds
-        it was 1038 nodes of 3003 (34.6%), and 87 of the 136 rooms that never
-        reached the map existed only because an unplaceable ancestor was
-        explored anyway. Cutting there hands that budget back to branches that
-        can be drawn.
+        Anything past a point the map never reaches is rolled, counted against
+        the room budget, and then thrown away. Over 40 seeds that was 1038
+        nodes of 3003 (34.6%); cutting hands that budget back to branches that
+        can be drawn, and takes it to 0.
 
         The check has to happen between waves rather than at the end, because
         by the end the dice are already spent. It is a judgement made on the
-        tree so far: the final layout walks a bigger tree and can occasionally
-        disagree, which is why the room's own entry, not this, remains the
-        record of whether it is drawn."""
+        tree so far, and the final layout walks a bigger one - so the entries
+        themselves, not this, remain the record of what is drawn."""
         while self._queue:
             for _ in range(len(self._queue)):
                 self._queue.popleft()()
-            self._cut_unplaceable_rooms()
+            self._cut_branches_the_map_will_not_reach()
 
     def dispatch_beyond(self, kind: str, level: int, modifier: int = 0, depth: int = 0) -> Node:
         """Resolve whatever lies beyond a passage/door/stairs, respecting the
@@ -218,9 +215,20 @@ class DungeonGenerator:
         self._queue.append(lambda: setattr(child, "lines", prefix + child.lines))
         return child
 
-    def _cut_unplaceable_rooms(self) -> None:
-        rooms, self._rooms_this_wave = self._rooms_this_wave, []
-        if not rooms or self._root is None:
+    def _cut_branches_the_map_will_not_reach(self) -> None:
+        """Ask the layout what it cannot draw, and stop exploring there.
+
+        Not only unplaceable rooms. The walk also stops where a passage runs
+        into a room already on the map, where it begins inside one, and where
+        a room's wall has no cell left for another opening - and everything
+        past any of those is rolled, counted against the room budget, and then
+        thrown away. Seed 72's passage 15 arrives against room 14 and opens a
+        secret entrance there; 55 nodes were generated beyond it.
+
+        The layout reports the ids it never reaches, so there is one rule here
+        rather than one per way of stopping."""
+        produced, self._produced_this_wave = self._produced_this_wave, []
+        if not produced or self._root is None:
             return
         from .layout import compute_layout
 
@@ -228,32 +236,58 @@ class DungeonGenerator:
             dungeon_type="", size_label="", target_rooms=self.target_rooms,
             seed=self.seed, root=self._root,
         )
+        cut: set[int] = set()
         placed = {
             room["id"]
-            for islands in compute_layout(probe, quiet=True).values()
+            for islands in compute_layout(probe, quiet=True, cut_out=cut).values()
             for island in islands
             for room in island["rooms"]
         }
-        for room in rooms:
-            if room.id in placed:
+        for parent in self._prune(cut):
+            if any("non vengono esplorate" in line or "non prosegue" in line
+                   for line in parent.lines):
                 continue
-            self._cut_children(room)
-            room.lines.append(
-                "[Layout] Non c'e' spazio sulla mappa per questa stanza: le sue altre uscite "
-                "non vengono esplorate, perche' porterebbero a stanze e passaggi che nessuno "
-                "puo' raggiungere. Il tiro e il contenuto di questa stanza restano nel registro."
-            )
+            if parent.kind == "room" and parent.id not in placed:
+                parent.lines.append(
+                    "[Layout] Non c'e' spazio sulla mappa per questa stanza: le sue altre uscite "
+                    "non vengono esplorate, perche' porterebbero a stanze e passaggi che nessuno "
+                    "puo' raggiungere. Il tiro e il contenuto di questa stanza restano nel registro."
+                )
+            else:
+                parent.lines.append(
+                    "[Layout] Il tracciato si interrompe qui, quindi l'esplorazione non prosegue "
+                    "oltre: quello che ci sarebbe stato non viene tirato, perche' nessuno potrebbe "
+                    "raggiungerlo. Quanto gia' tirato resta nel registro."
+                )
 
-    def _cut_children(self, node: Node) -> None:
-        """Drop everything hanging off `node` and cancel the work queued for it."""
-        for child in node.children:
-            for descendant in child.walk():
-                self._cancelled.add(descendant.id)
-                self.node_count -= 1
-        node.children = []
-        # The exits list is walked in step with the children, so it goes too -
-        # an exit that leads nowhere is not an exit anyone can use.
-        node.geo["exit_slots"] = []
+    def _prune(self, cut: set[int]) -> list[Node]:
+        """Detach each cut subtree, cancel the work still queued for it, and
+        report the nodes that lost children so they can say so."""
+        parents = {child.id: node for node in self._root.walk() for child in node.children}
+        bereaved: dict[int, Node] = {}
+        for node_id in cut:
+            parent = parents.get(node_id)
+            if parent is None:
+                continue  # already gone with an ancestor
+            doomed = [c for c in parent.children if c.id == node_id]
+            if not doomed:
+                continue
+            for node in doomed:
+                for descendant in node.walk():
+                    self._cancelled.add(descendant.id)
+                    self.node_count -= 1
+                    if descendant.kind == "room":
+                        # It is not in the dungeon any more, so it does not
+                        # count against the room budget either - which is the
+                        # whole point of cutting here rather than at the end.
+                        self.rooms_created -= 1
+            parent.children = [c for c in parent.children if c.id != node_id]
+            bereaved[parent.id] = parent
+            if parent.kind == "room":
+                # A room's exits are walked in step with its children, so the
+                # two lists have to stay the same length.
+                parent.geo["exit_slots"] = parent.geo.get("exit_slots", [])[:len(parent.children)]
+        return list(bereaved.values())
 
     # -- top level -------------------------------------------------------
 
@@ -607,7 +641,7 @@ class DungeonGenerator:
         node.lines = [f"[Room d20={shape['roll']}] {shape['text']}"]
         node.geo.update({"width_ft": shape["dims"][0], "length_ft": shape["dims"][1], "shape": shape.get("shape", "rect")})
         self.rooms_created += 1
-        self._rooms_this_wave.append(node)
+        self._produced_this_wave.append(node)
         extra_exits = max(0, shape["exits"] - 1)
         node.lines.append(
             f"Exits: {shape['exits']} ({extra_exits} beyond the way in)."
