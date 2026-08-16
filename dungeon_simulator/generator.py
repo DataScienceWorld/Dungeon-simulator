@@ -339,9 +339,16 @@ class DungeonGenerator:
                 if found:
                     node.lines.append(f"Secret door found (Perception {roll} vs DC 15)!")
                     node.children.append(self.dispatch_beyond("secret", level, depth=depth + 1))
-                    events.append({"type": "child", "turn": None})
+                    # A side branch, like the other doors this table puts in a
+                    # passage *wall*. It used to be dispatched straight ahead,
+                    # which was only ever survivable because finding it ended
+                    # the passage - now that the passage may carry on past it,
+                    # the two would be drawn down the same cells.
+                    events.append({"type": "child", "turn": self._resolve_side(node, payload.get("side"))})
+                else:
+                    node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed.")
+                if not self._passage_carries_on(node, payload):
                     return
-                node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed. The passage continues.")
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
                     return
@@ -367,8 +374,8 @@ class DungeonGenerator:
             if side:
                 child = self.dispatch_beyond(tag, level, depth=depth + 1)
                 node.children.append(child)
-                events.append({"type": "child", "turn": side})
-                if tag != "stairs":
+                events.append({"type": "child", "turn": self._resolve_side(node, side)})
+                if not self._passage_carries_on(node, payload):
                     return
                 segments += 1
                 if segments >= MAX_PASSAGE_SEGMENTS:
@@ -380,6 +387,45 @@ class DungeonGenerator:
             node.children.append(child)
             events.append({"type": "child", "turn": None})
             return
+
+    def _resolve_side(self, node, side: str | None) -> str | None:
+        """Which wall a side feature is in. Most rows say so themselves; a
+        secret door says only "on a passage wall", so the wall is rolled for -
+        and written down, because a reader has to be able to tell where it
+        was without re-running the generator."""
+        if side != "roll":
+            return side
+        value = self.dice.d100()
+        chosen = "left" if value <= 50 else "right"
+        node.lines.append(f"[Passage d100={value}] The secret door is in the {chosen} wall.")
+        return chosen
+
+    def _passage_carries_on(self, node, payload: dict) -> bool:
+        """Whether the passage goes on past a feature in one of its walls.
+
+        A door, or an opening to stairs, found in the side of a passage does
+        not have to be where that passage stops - the table rows that place
+        one now carry an explicit "50% chance the passage ends here,
+        otherwise it continues", and this is that roll.
+
+        Before this the behaviour was split and unstated: a door in a wall
+        always ended the passage, an opening to stairs never did, and a secret
+        door ended it only when someone noticed it. Rows with no such clause
+        keep the old default of ending, so this stays opt-in per row.
+
+        The roll and its outcome go in the log either way - the log is what
+        explains the map, and "the passage stops here" is exactly the sort of
+        thing a reader would otherwise have no way to account for."""
+        percent = payload.get("end_chance_pct")
+        if percent is None:
+            return False
+        value = self.dice.d100()
+        ends = value <= percent
+        node.lines.append(
+            f"[Passage d100={value} vs {percent}%] "
+            + ("The passage ends here." if ends else "The passage continues past it.")
+        )
+        return not ends
 
     def _passage_contents_lines(self, level: int) -> list[str]:
         value, entry = PASSAGE_CONTENTS_TABLE.roll(self.dice)

@@ -15,10 +15,14 @@ pytestmark = pytest.mark.skipif(not bridge.available(), reason="dungeongen (or s
 
 
 def _first_populated_level(dungeon, min_rooms=2, max_units=None):
+    """A level with enough rooms on it for the caller to have something to
+    check. It used to skip any level carrying a room-less island, back when
+    one of those forced the whole level to the fallback renderer. That is no
+    longer true, and the filter had become a way to reject most levels for no
+    reason - 57% of islands have no rooms, so seeds stopped qualifying at all
+    as the generator explored more."""
     layout = compute_layout(dungeon)
     for level, islands in layout.items():
-        if any(not isl["rooms"] for isl in islands):
-            continue
         total_rooms = sum(len(isl["rooms"]) for isl in islands)
         if total_rooms < min_rooms:
             continue
@@ -26,6 +30,56 @@ def _first_populated_level(dungeon, min_rooms=2, max_units=None):
             continue
         return level, islands
     return None, None
+
+
+def _rooms_island(islands):
+    """The first island on the level that actually has rooms in it."""
+    return next(isl for isl in islands if isl["rooms"])
+
+
+def _find_four_way(seeds=range(40)):
+    """Locate a four-way intersection the generator actually rolled, and
+    report the cells its four arms occupy.
+
+    Deliberately searched for rather than pinned to coordinates. The two
+    tests below used to name seed 72's cell (14,15) outright, which held only
+    as long as nothing upstream touched the dice: one clause added to the
+    passage table shifted the whole stream and left them asserting things
+    about a dungeon that no longer exists. What they are really about is the
+    shape of a crossing, and that can be found wherever it turns up.
+
+    Returns (island, junction_cell, arm_cells) or None."""
+    for seed in seeds:
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        four_ways = {
+            n.id: n for n in dungeon.all_nodes()
+            if n.kind == "passage" and any("four-way intersection" in line for line in n.lines)
+        }
+        if not four_ways:
+            continue
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                corridors = {}
+                for corridor in island["corridors"]:
+                    corridors.setdefault(corridor["id"], []).append(corridor)
+                for node_id, node in four_ways.items():
+                    trunk = corridors.get(node_id)
+                    arms = [corridors.get(c.id) for c in node.children]
+                    if trunk is None or not all(arms):
+                        continue
+                    junction = bridge._grid_cell_path(trunk[-1]["points"])[-1]
+                    arm_cells = [bridge._grid_cell_path(a[0]["points"])[0] for a in arms]
+                    # only the clean case: three distinct arms, each starting
+                    # on a cell next to the junction
+                    if len(set(arm_cells)) != len(arm_cells):
+                        continue
+                    if not all(abs(c[0] - junction[0]) + abs(c[1] - junction[1]) <= 1
+                               for c in arm_cells):
+                        continue
+                    return island, junction, arm_cells
+    return None
 
 
 def test_fits_size_limit_agrees_with_extent():
@@ -64,7 +118,7 @@ def test_render_island_svg_offset_places_a_room_correctly():
     dungeon = DungeonGenerator(seed=1).generate()
     _, islands = _first_populated_level(dungeon, max_units=bridge._MAX_MAP_UNITS)
     assert islands is not None
-    island = islands[0]
+    island = _rooms_island(islands)
     svg, off_x, off_y, scale, width, height = bridge.render_island_svg(island)
     assert "<svg" in svg
     assert width > 0 and height > 0
@@ -347,25 +401,19 @@ def test_every_corridor_the_layout_drew_reaches_dungeongen():
 
 
 def test_a_four_way_intersection_reaches_dungeongen_with_all_four_arms():
-    """Seed 72, level 1: passage 13 runs west and ends in a four-way. The
-    junction cell is (14,15); the through-route enters from (15,15) and
-    carries on west to (13,15), and the two side arms occupy the cells
-    directly north and south of the junction.
+    """A crossing the generator rolled has to arrive at dungeongen whole: the
+    junction cell, and the cell each of the three arms leaves through.
 
-    Pinned as its own case because the sweep above only proves no corridor is
-    missing - this states what the crossing itself has to look like once it
-    gets there, which is what the map is actually judged on."""
-    dungeon = DungeonGenerator(seed=72).generate()
-    island = compute_layout(dungeon)[1][0]
+    Only the sweep above proves no corridor is missing; this states what the
+    crossing itself has to look like once it gets there, which is what the
+    map is actually judged on."""
+    found = _find_four_way()
+    assert found is not None, "no four-way intersection found across the sweep"
+    island, junction, arms = found
     cells = _passage_cells(bridge.build_dungeongen_dungeon(island))
-    for arm, cell in [
-        ("l'incrocio", (14, 15)),
-        ("il tronco da est", (15, 15)),
-        ("il proseguimento a ovest", (13, 15)),
-        ("il braccio nord", (14, 14)),
-        ("il braccio sud", (14, 16)),
-    ]:
-        assert cell in cells, f"{arm} {cell} non arriva a dungeongen"
+    assert junction in cells, f"the junction {junction} never reaches dungeongen"
+    for arm in arms:
+        assert arm in cells, f"the arm at {arm} never reaches dungeongen"
 
 
 def test_the_four_way_is_one_connected_region_in_dungeongens_own_model():
@@ -379,15 +427,16 @@ def test_the_four_way_is_one_connected_region_in_dungeongens_own_model():
     stub beside the crossing.
 
     Asked of dungeongen itself rather than of the picture: Map's own
-    _trace_connected_region walks what is actually reachable. All five cells
-    of seed 72's four-way have to come back in one region.
+    _trace_connected_region walks what is actually reachable, and every cell
+    of the crossing has to come back in one region.
 
-    Verified to fail without _claim_takeoff_cell: the two side arms came back
-    as regions of their own."""
+    Verified to fail without _claim_takeoff_cell: the side arms came back as
+    regions of their own."""
     from dungeongen.constants import CELL_SIZE
 
-    dungeon = DungeonGenerator(seed=72).generate()
-    island = compute_layout(dungeon)[1][0]
+    found = _find_four_way()
+    assert found is not None, "no four-way intersection found across the sweep"
+    island, junction, arms = found
     dg = bridge.build_dungeongen_dungeon(island)
     dungeon_map = bridge._convert_dungeon(dg, show_numbers=False)
 
@@ -399,33 +448,24 @@ def test_the_four_way_is_one_connected_region_in_dungeongens_own_model():
         dungeon_map._trace_connected_region(element, visited, region)
         regions.append(region)
 
-    # dungeongen re-normalises to its own Dungeon.bounds
-    bx, by = dg.bounds[0], dg.bounds[1]
+    bx, by = dg.bounds[0], dg.bounds[1]  # dungeongen re-normalises to its own bounds
 
-    def regions_at(gx, gy):
-        mx = (gx - bx) * CELL_SIZE + CELL_SIZE / 2
-        my = (gy - by) * CELL_SIZE + CELL_SIZE / 2
-        found = set()
+    def regions_at(cell):
+        mx = (cell[0] - bx) * CELL_SIZE + CELL_SIZE / 2
+        my = (cell[1] - by) * CELL_SIZE + CELL_SIZE / 2
+        hits = set()
         for i, region in enumerate(regions):
             for element in region:
                 b = getattr(element, "bounds", None)
                 if b and b.x <= mx <= b.x + b.width and b.y <= my <= b.y + b.height:
-                    found.add(i)
+                    hits.add(i)
                     break
-        return found
+        return hits
 
-    cells = {
-        "l'incrocio": (14, 15),
-        "il tronco da est": (15, 15),
-        "il proseguimento a ovest": (13, 15),
-        "il braccio nord": (14, 14),
-        "il braccio sud": (14, 16),
-    }
-    at = {name: regions_at(*cell) for name, cell in cells.items()}
-    for name, found in at.items():
-        assert found, f"{name} {cells[name]} non e' coperto da nessun elemento"
-    shared = set.intersection(*at.values())
-    assert shared, (
-        "i bracci del quadrivio non sono nella stessa regione connessa: "
-        + ", ".join(f"{n} in {sorted(r)}" for n, r in at.items())
+    at = {cell: regions_at(cell) for cell in [junction, *arms]}
+    for cell, hits in at.items():
+        assert hits, f"{cell} is not covered by any element"
+    assert set.intersection(*at.values()), (
+        "the arms of the crossing are not in one connected region: "
+        + ", ".join(f"{c} in {sorted(r)}" for c, r in at.items())
     )

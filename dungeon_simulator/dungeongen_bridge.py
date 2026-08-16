@@ -230,7 +230,7 @@ def _path_cells(waypoints: list[tuple]) -> set[tuple]:
     return cells
 
 
-def _claim_takeoff_cell(waypoints: list[tuple], drawn_cells: set[tuple]) -> list[tuple]:
+def _claim_takeoff_cell(waypoints: list[tuple], other_cells: set[tuple]) -> list[tuple]:
     """Extend a branch back one cell so it shares the cell it takes off from.
 
     dungeongen's adapter only calls a cell a crossing when two passages
@@ -252,7 +252,7 @@ def _claim_takeoff_cell(waypoints: list[tuple], drawn_cells: set[tuple]) -> list
     those would knock a hole in a wall the map never said was open."""
     (fx, fy), (nx, ny) = waypoints[0], waypoints[1]
     back = (fx - _sign(nx - fx), fy - _sign(ny - fy))
-    if back == waypoints[0] or back not in drawn_cells:
+    if back == waypoints[0] or back not in other_cells:
         return waypoints
     return [back, *waypoints]
 
@@ -594,6 +594,18 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
     # when nothing drew them - the crossing rendered as a T with an arm
     # missing. Comparing cells also catches the reverse case the old test
     # missed, a corridor lying entirely under a link but starting elsewhere.
+    # Which cell a branch takes off from is a fact about the map, not about
+    # how far through this loop we happen to be. Testing it against the cells
+    # handed over *so far* (which is right for the skip test below) made it
+    # depend on the order the corridors are listed in: an arm that came before
+    # its own trunk found nothing behind it and stayed sealed off, so whether
+    # a crossing was drawn as one was luck. Collected up front instead.
+    route_cells: set[tuple] = set()
+    for route in [*island["links"], *island["corridors"]]:
+        pts = _dedupe(route["points"])
+        if len(pts) >= 2:
+            route_cells |= _path_cells(_pad_single_cell(_grid_cell_path(pts)))
+
     for index, corridor in enumerate(island["corridors"]):
         points = _dedupe(corridor["points"])
         if len(points) < 2:
@@ -604,7 +616,7 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         cells = _path_cells(waypoints)
         if cells <= drawn_cells:
             continue
-        waypoints = _claim_takeoff_cell(waypoints, drawn_cells)
+        waypoints = _claim_takeoff_cell(waypoints, route_cells - cells)
         cells = _path_cells(waypoints)
         if dungeon.add_passage(_DGPassage(
             start_room=f"branch{index}a", end_room=f"branch{index}b",

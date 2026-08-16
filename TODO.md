@@ -95,18 +95,31 @@ as two separate corridors. The same helper should extend to that end once the
 layout decides what an arriving passage means (an intersection to record in
 the log, not just cells to merge).
 
-## 5. One link in 211 still meets its rooms only at a corner
+## 5. Rooms that find nowhere to go are up to 16%
+
+Was 13.2% (60 seeds x 2 depths). The wall-feature rows now give the passage a
+50% chance of carrying on past a door or an opening rather than stopping
+there, so passages run longer and the map gets more crowded: 114 rooms of 713
+have no clear spot along their own entry wall, against 90 of 684 before.
+
+Each one says so in its own log entry, which is the invariant that matters,
+but they are still rooms the dice rolled and the map does not show. The lever
+is not the margin (already 0) - it is that a room only ever tries positions
+along the wall it was entered from. Letting it try the far side of its own
+corridor, or shortening the corridor, would find room for some of them.
+
+## 6. One link in 211 still meets its rooms only at a corner
 
 Left unresolved in `2642091`. Counted over links that leave a declared room
 exit: 210 meet both rooms squarely, 1 doesn't. Not diagnosed.
 
-## 6. Cell-conversion machinery in `dungeongen_bridge.py` is now mostly pass-through
+## 7. Cell-conversion machinery in `dungeongen_bridge.py` is now mostly pass-through
 
 Already written up in that module's own docstring - see the `TODO (pending
 cleanup...)` block there for which functions are affected and why this must
 not be ripped out reflexively.
 
-## 7. ~~Cost of a passage continuing past a side opening~~ (absorbed by item 1)
+## 8. ~~Cost of a passage continuing past a side opening~~ (absorbed by item 1)
 
 Making a wall feature a side branch (rather than a turn of the trunk) means
 the passage carries on past it, which explores more of the dungeon. The cost
@@ -133,12 +146,15 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - no corridor or link segment runs diagonally
 - every corridor the layout drew reaches dungeongen (or is already covered,
   cell for cell, by something that did)
+- every link starts on its from-room's wall and ends on its to-room's
 - no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
-684 rooms, 90 of them unplaceable (13.2%), 26370 coordinates, 4300 segments,
-886 room pairs, 1073 exits - all five checks clean. Hang sweep: 2086 islands,
-0 hangs, 4 refusals which are all the deliberate size guard.
+713 rooms, 114 of them unplaceable (16.0%), 28442 coordinates, 4869 segments,
+937 room pairs, 1169 exits, 157 links - all clean. Hang sweep: 1987 islands,
+0 hangs, 2 refusals which are all the deliberate size guard. Levels drawn by
+dungeongen: 127 of 128 (99%) - the one that falls back has an island past the
+size limit, which is the guard doing its job.
 
 Run the hang sweep with **empty islands included**. It used to skip them
 (`if not island["rooms"]: continue`) - which is exactly where the segfault in

@@ -61,3 +61,38 @@ def test_room_shape_builder_covers_all_rolls():
         shape = roll_room_shape(dice)
         assert shape["exits"] >= 1
         assert shape["dims"][0] > 0 and shape["dims"][1] > 0
+
+
+_WALL_FEATURE_ROWS = (12, 13, 14, 17, 18)
+
+
+def test_wall_feature_rows_offer_the_passage_a_way_to_carry_on():
+    """The rows that put a feature in a passage *wall* - a door either side,
+    a secret door, an opening to stairs - each carry an explicit 50% chance
+    that the passage ends there.
+
+    Before this the behaviour was split three ways and stated nowhere: a door
+    in a wall always ended the passage, an opening to stairs never did, and a
+    secret door ended it only if someone noticed it. The clause is on the row
+    itself so a reader of the table knows it without reading the generator."""
+    for roll in _WALL_FEATURE_ROWS:
+        payload = PASSAGE_TABLE.resolve(roll).payload
+        assert payload.get("end_chance_pct") == 50, (
+            f"passage row {roll} should carry the 50% end/continue clause"
+        )
+        assert "50% chance the passage ends here" in payload["template"], (
+            f"passage row {roll}'s own text should state the clause"
+        )
+        assert payload.get("side"), (
+            f"passage row {roll} places its feature in a wall, so it needs a side"
+        )
+
+
+def test_no_other_passage_row_carries_the_clause():
+    """It is opt-in per row: anything without the clause keeps the plain
+    behaviour, so adding the key by accident silently changes a row."""
+    for roll in range(1, 21):
+        payload = PASSAGE_TABLE.resolve(roll).payload
+        if roll in _WALL_FEATURE_ROWS:
+            continue
+        assert "end_chance_pct" not in payload, f"passage row {roll} unexpectedly has the clause"

@@ -277,7 +277,12 @@ _RENDER_SCRIPT_JS = """
 
 
 def _tab_id(level: int) -> str:
-    return f"dg-map-lvl-{level}".replace("-", "n") if level < 0 else f"dg-map-lvl-{level}"
+    # A minus sign can't go in the id because the CSS selectors built from it
+    # are written by hand, so "n" stands in for it - but only for the sign.
+    # Replacing every "-" in the whole string turned level -1 into
+    # "dgnmapnlvlnn1", which worked (radio, label and selector all come from
+    # here) and was unreadable in the page source.
+    return f"dg-map-lvl-n{-level}" if level < 0 else f"dg-map-lvl-{level}"
 
 
 def _room_hue(room: dict) -> str:

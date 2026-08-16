@@ -72,3 +72,81 @@ def test_limitless_size_is_capped():
             found_limitless = True
             assert dungeon.target_rooms == 5
     assert found_limitless, "expected at least one 'Limitless' roll across 200 seeds"
+
+
+import re as _re
+
+_WALL_FEATURE_ROWS = (12, 13, 14, 17, 18)
+_CLAUSE_ROLL = _re.compile(r"\[Passage d100=(\d+) vs 50%\] The passage (ends here|continues past it)\.")
+_TABLE_ROLL = _re.compile(r"\[Passage d20=(\d+)\]")
+
+
+def _passage_nodes(dungeon):
+    return [n for n in dungeon.all_nodes() if n.kind == "passage"]
+
+
+def test_the_wall_feature_roll_is_always_written_down():
+    """Standing rule for this project: whatever the dice decided has to be
+    recoverable from the log. "The passage stops here" is precisely the kind
+    of decision a reader of the map cannot otherwise account for, so the roll
+    and its outcome are both written out."""
+    seen = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in _passage_nodes(dungeon):
+            rows = [int(m.group(1)) for line in node.lines for m in [_TABLE_ROLL.match(line)] if m]
+            clauses = [line for line in node.lines if _CLAUSE_ROLL.match(line)]
+            wall_rows = [r for r in rows if r in _WALL_FEATURE_ROWS]
+            assert len(clauses) == len(wall_rows), (
+                f"seed {seed} passage #{node.id}: rolled rows {wall_rows} but the log "
+                f"records {len(clauses)} end/continue rolls"
+            )
+            seen += len(clauses)
+    assert seen > 100, "expected the sweep to hit plenty of wall features"
+
+
+def test_both_outcomes_of_the_wall_feature_roll_actually_happen():
+    """A 50% that always lands the same way would pass every other test here
+    while quietly reinstating the old fixed behaviour."""
+    ends = carries_on = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in _passage_nodes(dungeon):
+            for line in node.lines:
+                match = _CLAUSE_ROLL.match(line)
+                if match:
+                    if match.group(2) == "ends here":
+                        ends += 1
+                    else:
+                        carries_on += 1
+    total = ends + carries_on
+    assert total > 100
+    # Loose bounds: this pins "both happen, roughly evenly", not the exact
+    # stream. Measured over 60 seeds it is 50.5% / 49.5%.
+    assert 0.35 < ends / total < 0.65, f"{ends} ended vs {carries_on} carried on"
+
+
+def test_a_found_secret_door_hangs_off_a_wall_not_straight_ahead():
+    """The secret door is "on a passage wall", so it is a side branch like the
+    other two wall doors. It used to be dispatched straight ahead, which only
+    worked because finding it ended the passage; now that the passage can carry
+    on past it, straight ahead would run the branch down the trunk's own cells.
+
+    The side is rolled (the table doesn't say which wall) and written down."""
+    checked = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in _passage_nodes(dungeon):
+            if not any("Secret door found" in line for line in node.lines):
+                continue
+            if not any("Secret door on a passage wall" in line for line in node.lines):
+                continue  # the dead-end table's secret door is a different row
+            wall = [line for line in node.lines if "The secret door is in the" in line]
+            assert wall, f"seed {seed} passage #{node.id}: the wall was never recorded"
+            assert any(w in wall[0] for w in ("left wall", "right wall"))
+            turns = [e.get("turn") for e in node.geo.get("events", []) if e["type"] == "child"]
+            assert any(t in ("left", "right") for t in turns), (
+                f"seed {seed} passage #{node.id}: the secret door is not a side branch"
+            )
+            checked += 1
+    assert checked, "expected at least one found secret door across the sweep"

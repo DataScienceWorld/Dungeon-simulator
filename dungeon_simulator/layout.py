@@ -41,8 +41,8 @@ ROOM_MARGIN = 0.0  # rooms may share a wall, they just may not overlap. A gap is
 # least one whole cell of its own, so it is the passage that separates them. Demanding a
 # further clear cell only rejected real placements - a room reached through a door that sits
 # against a neighbour's wall has nowhere else to be, and was simply dropped instead. Across
-# 60 seeds x 2 depths, dropping the requirement places 594 rooms of 684 rather than 548, with
-# the unplaceable ones down from 19.9% to 13.2% and still no two rooms overlapping.
+# 60 seeds x 2 depths, dropping the requirement places 599 rooms of 713 rather than 560, with
+# the unplaceable ones down from 21.5% to 16.0% and still no two rooms overlapping.
 # Any margin at all costs the same: coordinates are whole cells, so anything in (0, 1] rejects
 # exactly the placements that share a wall, and 0.5 and 1.0 measure identically.
 # (Re-measure with __pycache__ cleared - flipping this constant does not change the file's
