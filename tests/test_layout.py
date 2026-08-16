@@ -351,8 +351,16 @@ def test_a_door_takes_no_cell_of_its_own():
                     a, b = rects.get(link["from_room"]), rects.get(link["to_room"])
                     if a is None or b is None:
                         continue
-                    if not link["doors"] or len(set(link["points"])) != 1:
-                        continue  # the whole link is one threshold
+                    from dungeon_simulator import dungeongen_bridge as bridge
+                    if not link["doors"]:
+                        continue
+                    # The whole link is one threshold. Measured on the cells,
+                    # not the points: the route steps across the door even
+                    # though the walk does not advance through it, so such a
+                    # link is a there-and-back in lattice terms and lands on a
+                    # single cell.
+                    if len(bridge._grid_cell_path(bridge._dedupe(link["points"]))) != 1:
+                        continue
                     touching = (
                         (a[2] == b[0] or b[2] == a[0]) and a[1] < b[3] and b[1] < a[3]
                         or (a[3] == b[1] or b[3] == a[1]) and a[0] < b[2] and b[0] < a[2]

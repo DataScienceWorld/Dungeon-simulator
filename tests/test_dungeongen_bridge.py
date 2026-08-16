@@ -495,7 +495,13 @@ def test_two_rooms_joined_by_a_door_keep_the_wall_between_them():
     door, of all things - were drawn merged.
 
     A secret door also has to say so: dungeongen has a type for it, and a
-    secret door that reads as an opening is not a secret door."""
+    secret door that reads as an opening is not a secret door.
+
+    The match works because the route records crossing the threshold. A door
+    takes no cell of its own, so without that step the link's path stopped on
+    the near side of it and its end cell could never equal the door's - which
+    is how seed 72's rooms 1 and 14, two rooms that merely share a wall, came
+    out drawn as one."""
     checked = secrets = 0
     for seed in range(30):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
@@ -505,7 +511,8 @@ def test_two_rooms_joined_by_a_door_keep_the_wall_between_them():
                 threshold_links = [
                     link for link in island["links"]
                     if link["from_room"] in placed and link["to_room"] in placed
-                    and link["doors"] and len(bridge._dedupe(link["points"])) == 1
+                    and link["doors"]
+                    and len(bridge._grid_cell_path(bridge._dedupe(link["points"]))) == 1
                 ]
                 if not threshold_links:
                     continue

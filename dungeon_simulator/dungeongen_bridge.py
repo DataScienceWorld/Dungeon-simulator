@@ -310,17 +310,12 @@ def _door_type_at(link: dict, end_cell: tuple) -> "_DGDoorType":
     region and the wall between them is never drawn at all. A corridor
     running alongside the room it leaves then reads as part of that room
     rather than as a separate passage."""
-    doors = link["doors"]
-    if len(_dedupe(link["points"])) == 1 and doors:
-        # The whole link *is* one threshold - two rooms sharing a wall with a
-        # door in it - so there is nothing else it could be and no cell to
-        # compare. Comparing anyway got it wrong every time: the link's own
-        # cell and the door's sit on opposite sides of that shared wall (the
-        # link takes the cell its point falls in, the door the cell it heads
-        # into), so the match failed, the door came over OPEN, and dungeongen
-        # merged the two rooms into one region and drew no wall between them.
-        return _door_kind(doors[0])
-    for door in doors:
+    # Matched by cell, and that works because the route now records crossing
+    # the threshold: a door takes no cell of its own, so without that step the
+    # link's path stopped on the near side and its end cell could never match
+    # the door's own. There is no special case for "the whole link is one
+    # threshold" any more - over 40 seeds no link collapses to a single point.
+    for door in link["doors"]:
         if end_cell in door_cells(door):
             return _door_kind(door)
     return _DGDoorType.OPEN
@@ -537,21 +532,13 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         points = _dedupe(link["points"])
         if not points:
             continue
-        if len(points) == 1:
-            # Two rooms sharing a wall with a door in it. Now that a door sits
-            # *on* the wall rather than taking a cell, the entire link is that
-            # one threshold, so its path collapses to a single point - which is
-            # 98 of the 156 resolved links across 40 seeds, not a corner case.
-            # Dropping them (what the old `len(points) < 2` guard did) left
-            # most adjacent rooms drawn with no way between them at all.
-            #
-            # Handing the cell over is right rather than a workaround:
-            # dungeongen's adapter treats a Door as *the* element for the cell
-            # it occupies and creates no passage when doors cover the whole
-            # path ("No passage needed - doors/exits cover all cells"), and
-            # Map._trace_connected_region walks through an open door, so the
-            # two rooms come out genuinely connected.
-            points = [points[0], points[0]]
+        # A link of one cell is normal, not a degenerate case to drop: two
+        # rooms sharing a wall with a door in it are 110 of the 151 resolved
+        # links across 40 seeds. Dropping them (what a `len(points) < 2` guard
+        # once did) left most adjacent rooms drawn with no way between them.
+        # dungeongen models it directly - a Door is *the* element for the cell
+        # it occupies, and no passage is created when doors cover the whole
+        # path - so the single cell is handed over as it is.
         waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2:
             continue

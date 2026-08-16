@@ -456,6 +456,16 @@ class _Layout:
                     "secret": bool(node.geo.get("secret")), "lines": node.lines}
             island["doors"].append(door)
             path.doors.append(door)
+            # The route has to cross the threshold even though the walk does
+            # not move through it. Without this the link's cell path never
+            # leaves the cell in front of the door, so its end cell sits on
+            # the wrong side of it - and the type lookup, which matches the
+            # door by cell, found nothing and handed the door over as an open
+            # one. In dungeongen an open door merges the two regions and
+            # erases the wall between them, which is how seed 72's rooms 1 and
+            # 14 - two rooms that merely happen to share a wall - came out
+            # drawn as a single room.
+            path.points.append((x + dx, y + dy))
             for child in node.children:
                 # No gap can open up here to be bridged. This used to append a
                 # connecting corridor when the child came back at a different
