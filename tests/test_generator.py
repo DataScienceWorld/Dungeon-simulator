@@ -226,3 +226,45 @@ def test_a_side_passage_forks_two_ways():
             assert len(node.children) == len(turns)
             checked += 1
     assert checked > 20, f"expected plenty of side passages, found {checked}"
+
+
+def test_a_wall_feature_that_lets_the_passage_carry_on_forks_in_two():
+    """When the 50% says the passage carries on past a door in its wall,
+    that is a choice - through the door, or straight on - so it is two nodes
+    and this passage ends at the fork.
+
+    It used to keep rolling in the same node, which put everything that
+    happened *after* the fork inside the entry for the stretch before it: seed
+    72's passage 3 recorded the door, then three more rolls belonging to the
+    corridor beyond, all in one entry.
+
+    When the roll says the passage ends instead, there is only the feature and
+    no way straight on - that case must not sprout a second child."""
+    forked = ended = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage":
+                continue
+            clause = [line for line in node.lines if _CLAUSE_ROLL.match(line)]
+            if not clause:
+                continue
+            carries_on = _CLAUSE_ROLL.match(clause[-1]).group(2) == "continues past it"
+            turns = [e.get("turn") for e in node.geo.get("events", []) if e["type"] == "child"]
+            # The feature itself is a side branch, except for a secret door
+            # nobody noticed - that one leaves nothing behind at all, so the
+            # rule to check is only about the way *straight on*: it is there
+            # exactly when the roll said the passage carries on.
+            if carries_on:
+                assert turns and turns[-1] is None, (
+                    f"seed {seed} passage #{node.id}: carried on past a wall feature but "
+                    f"there is no way straight on among {turns}"
+                )
+                forked += 1
+            else:
+                assert not turns or turns[-1] is not None, (
+                    f"seed {seed} passage #{node.id}: ended at a wall feature but still "
+                    f"has a way straight on: {turns}"
+                )
+                ended += 1
+    assert forked > 20 and ended > 20, f"forked {forked}, ended {ended}"

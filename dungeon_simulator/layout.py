@@ -221,6 +221,13 @@ def _new_island() -> dict:
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
         "links": [], "room_exits": [], "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
         "_route_cells": set(),
+        # child node id -> the cell of the corridor it branches off from. The
+        # renderer needs to know which cell a branch takes off from to draw a
+        # crossing rather than two corridors that merely touch, and guessing it
+        # from the branch's own shape gets it wrong both ways round: the cell
+        # behind it may belong to a corridor passing by, and the cell beside it
+        # may be its own trunk. The walk knows for certain, so it says.
+        "_takeoff": {},
     }
 
 
@@ -829,6 +836,14 @@ class _Layout:
                         # instead of cutting that corner: back along the
                         # trunk's own axis first, then out to the side.
                         corner = (bx, y) if tdx else (x, by)
+                # The trunk's own last cell, which is what the branch leaves
+                # from: travelling in the positive direction the cell is behind
+                # the lattice point, travelling in the negative one it is the
+                # point's own cell.
+                tdx, tdy = _VECTORS[heading]
+                island["_takeoff"][child.id] = (
+                    int(x - (1 if tdx > 0 else 0)), int(y - (1 if tdy > 0 else 0))
+                )
                 child_path = path.branch((bx, by), corner) if turn is not None else path
                 self._enter(child, bx, by, child_heading, level, island,
                             bool(event.get("portal")), child_path)
@@ -967,6 +982,18 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
             item["y"] += shift_y
     for link in island["links"]:
         link["points"] = [(cx + shift_x, cy + shift_y) for cx, cy in link["points"]]
+    # The cell bookkeeping moves with everything else. It used to be left
+    # behind: the renderer reads _takeoff *after* this translation, so every
+    # branch reported a takeoff cell in pre-translation coordinates - a cell
+    # nowhere near it, often at negative y - and not one was ever claimed.
+    dx_cells, dy_cells = int(shift_x), int(shift_y)
+    island["_takeoff"] = {
+        node_id: (cx + dx_cells, cy + dy_cells)
+        for node_id, (cx, cy) in island["_takeoff"].items()
+    }
+    island["_route_cells"] = {
+        (cx + dx_cells, cy + dy_cells) for cx, cy in island["_route_cells"]
+    }
     ox, oy = island["origin"]
     island["origin"] = (ox + shift_x, oy + shift_y)
 

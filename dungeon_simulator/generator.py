@@ -349,12 +349,11 @@ class DungeonGenerator:
                     events.append({"type": "child", "turn": self._resolve_side(node, payload.get("side"))})
                 else:
                     node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed.")
-                if not self._passage_carries_on(node, payload):
-                    return
-                segments += 1
-                if segments >= MAX_PASSAGE_SEGMENTS:
-                    return
-                continue
+                if self._passage_carries_on(node, payload):
+                    onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                    node.children.append(onward)
+                    events.append({"type": "child", "turn": None})
+                return
 
             if tag == "shaft":
                 sub = self.dice.d4()
@@ -377,12 +376,18 @@ class DungeonGenerator:
                 child = self.dispatch_beyond(tag, level, depth=depth + 1)
                 node.children.append(child)
                 events.append({"type": "child", "turn": self._resolve_side(node, side)})
-                if not self._passage_carries_on(node, payload):
-                    return
-                segments += 1
-                if segments >= MAX_PASSAGE_SEGMENTS:
-                    return
-                continue
+                # Carrying on past the feature is a way on of its own, so it is
+                # a branch and this passage ends here. It used to keep rolling
+                # in the same node, which put everything that happened *after*
+                # the fork - three more rolls, in seed 72's passage 3 - inside
+                # the entry for the stretch before it. Same reasoning as the
+                # side passage and the T-junction: where there is a choice,
+                # there are two nodes.
+                if self._passage_carries_on(node, payload):
+                    onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                    node.children.append(onward)
+                    events.append({"type": "child", "turn": None})
+                return
 
             # terminal: door / stairs / room
             child = self.dispatch_beyond(tag, level, depth=depth + 1)
