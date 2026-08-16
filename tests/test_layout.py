@@ -261,3 +261,59 @@ def test_render_map_section_never_crashes_across_many_seeds():
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=15).generate()
         html = render_map_section(dungeon)
         assert isinstance(html, str) and html
+
+
+def _room_rects(island):
+    rects = {}
+    for room in island["rooms"]:
+        xs = [c[0] for c in room["corners"]]
+        ys = [c[1] for c in room["corners"]]
+        rects[room["id"]] = (min(xs), min(ys), max(xs), max(ys))
+    return rects
+
+
+def _on_boundary(point, rect, tol=1e-6):
+    x, y = point
+    x0, y0, x1, y1 = rect
+    inside = x0 - tol <= x <= x1 + tol and y0 - tol <= y <= y1 + tol
+    on_edge = (abs(x - x0) < tol or abs(x - x1) < tol
+               or abs(y - y0) < tol or abs(y - y1) < tol)
+    return inside and on_edge
+
+
+def test_every_link_starts_and_ends_on_its_own_rooms_wall():
+    """A link says "these two rooms are joined, and here is the way between
+    them". Both claims have to hold: if the recorded way doesn't start on the
+    first room's wall, the connection is asserted where no corridor arrives.
+
+    dungeongen believes the assertion. It punches a door into the room at the
+    link's first point and splices a stub to reach it, so a link starting out
+    on some distant corridor drew a corridor into a wall from nowhere - seed
+    72's room 6 got one that ran west and doubled straight back onto itself.
+
+    The cause was a branch keeping the room it came from while throwing away
+    the path walked to get there. Verified to fail before the fix: 30 of 141
+    links (21%) had an end off its room's wall, always the starting one."""
+    checked = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                rects = _room_rects(island)
+                for link in island["links"]:
+                    a = rects.get(link["from_room"])
+                    b = rects.get(link["to_room"])
+                    if a is None or b is None:
+                        continue  # a room that never made it onto the map
+                    checked += 1
+                    assert _on_boundary(link["points"][0], a), (
+                        f"seed {seed}: link #{link['from_room']}->#{link['to_room']} "
+                        f"starts at {link['points'][0]}, off room {link['from_room']}'s "
+                        f"wall {a}"
+                    )
+                    assert _on_boundary(link["points"][-1], b), (
+                        f"seed {seed}: link #{link['from_room']}->#{link['to_room']} "
+                        f"ends at {link['points'][-1]}, off room {link['to_room']}'s "
+                        f"wall {b}"
+                    )
+    assert checked > 100, "expected the sweep to find plenty of links"

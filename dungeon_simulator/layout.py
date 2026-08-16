@@ -271,8 +271,29 @@ class _Path:
         self.points = [start_point]
         self.doors = []
 
-    def branch(self, start_point):
-        return _Path(self.room_from, start_point)
+    def branch(self, start_point, corner=None):
+        """A side branch leaving this route at `start_point`.
+
+        It keeps the whole way walked so far, not just the room it started
+        from. Dropping the points and keeping only `room_from` - what this
+        used to do - declared a link between two rooms whose recorded path
+        began nowhere near the first of them: over 40 seeds, 21% of links had
+        their starting end off its own room's wall. dungeongen believes the
+        declaration, so it punched a door into that room at a point out on
+        some distant corridor and spliced a stub to reach it - room 6 of seed
+        72 got a corridor that ran west and doubled straight back onto itself.
+
+        `corner` is the intermediate point where the branch's takeoff needed a
+        correction on both axes at once; without it the route would jump
+        diagonally off the trunk, which is not a corridor anyone can walk."""
+        forked = _Path(self.room_from, self.points[0])
+        points = list(self.points)
+        for point in (corner, start_point):
+            if point is not None and point != points[-1]:
+                points.append(point)
+        forked.points = points
+        forked.doors = list(self.doors)
+        return forked
 
 
 class _Layout:
@@ -617,6 +638,7 @@ class _Layout:
                 child_heading = _rotate(heading, turn)
                 child.geo["approach_heading"] = child_heading
                 bx, by = x, y
+                corner = None
                 if turn is not None:
                     # A branch leaves through the *side wall of the cell the
                     # passage is standing in*, not from the lattice point its
@@ -632,7 +654,14 @@ class _Layout:
                     bdx, bdy = _VECTORS[child_heading]
                     bx += (1 if bdx > 0 else 0) - (1 if tdx > 0 else 0)
                     by += (1 if bdy > 0 else 0) - (1 if tdy > 0 else 0)
-                child_path = path.branch((bx, by)) if turn is not None else path
+                    if bx != x and by != y:
+                        # Both corrections fired at once, so the takeoff is
+                        # diagonally off the trunk's last point. The route that
+                        # records this branch has to bend at a right angle
+                        # instead of cutting that corner: back along the
+                        # trunk's own axis first, then out to the side.
+                        corner = (bx, y) if tdx else (x, by)
+                child_path = path.branch((bx, by), corner) if turn is not None else path
                 self._enter(child, bx, by, child_heading, level, island,
                             bool(event.get("portal")), child_path)
                 # Nothing to reconcile after the child: it is walked from the
