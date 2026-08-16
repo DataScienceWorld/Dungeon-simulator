@@ -183,7 +183,11 @@ def test_no_corridor_or_link_segment_runs_diagonally():
                                 f"seed {seed} (max_depth={max_depth}): "
                                 f"{route['id']} runs diagonally from {a} to {b}"
                             )
-    assert checked > 4000  # the sweep really did walk the map, not an empty layout
+    # The sweep really did walk the map, not an empty layout. A floor, not a
+    # measurement: the segment count moves with every change to how corridors
+    # are cut (it was 4626 before doors stopped taking a cell of their own,
+    # 3558 after), so it is set well below whatever the current figure is.
+    assert checked > 3000
 
 
 def test_root_island_is_flagged_as_entrance():
@@ -317,3 +321,113 @@ def test_every_link_starts_and_ends_on_its_own_rooms_wall():
                         f"wall {b}"
                     )
     assert checked > 100, "expected the sweep to find plenty of links"
+
+
+def _cells_of(points):
+    from dungeon_simulator import dungeongen_bridge as bridge
+    return bridge._path_cells(bridge._pad_single_cell(bridge._grid_cell_path(points)))
+
+
+def test_a_door_takes_no_cell_of_its_own():
+    """A door is the threshold you cross, not a stretch of corridor, so it
+    sits on the wall line and the walk does not advance through it.
+
+    Every door the tables roll is 5ft (419 of 419 across 40 seeds), and the
+    rule that a 5ft feature becomes a full 10ft cell was being applied to them
+    too: a door in a wall, a passage with no length of its own and a second
+    door came out as three 10ft cells in a row - 30ft of map for what the dice
+    called 5 + 0 + 5.
+
+    Checked where it shows: two rooms joined by nothing but a door have to end
+    up sharing a wall. With the door taking a cell they were always one cell
+    apart, with a stub of corridor between them that no roll asked for."""
+    checked = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                rects = _room_rects(island)
+                for link in island["links"]:
+                    a, b = rects.get(link["from_room"]), rects.get(link["to_room"])
+                    if a is None or b is None:
+                        continue
+                    if not link["doors"] or len(set(link["points"])) != 1:
+                        continue  # the whole link is one threshold
+                    touching = (
+                        (a[2] == b[0] or b[2] == a[0]) and a[1] < b[3] and b[1] < a[3]
+                        or (a[3] == b[1] or b[3] == a[1]) and a[0] < b[2] and b[0] < a[2]
+                    )
+                    assert touching, (
+                        f"seed {seed}: rooms #{link['from_room']} and #{link['to_room']} are "
+                        f"joined by a door alone but do not share a wall: {a} and {b}"
+                    )
+                    checked += 1
+    assert checked > 50, f"expected plenty of door-only links, found {checked}"
+
+
+def test_a_passage_reaching_a_drawn_room_opens_a_secret_entrance():
+    """Draw order decides. A room is placed only where it fits around what is
+    already there; a passage laid down afterwards stops at the first room it
+    reaches and opens into it as a way in nobody planned - a secret one.
+
+    It used to run straight through: 318 of 2673 corridor cells across 40
+    seeds (11.9%) sat inside a room's floor, which dungeongen then drew as
+    corridor - a notch eaten out of the wall, opening onto nothing. That is
+    the "caverna" reported beside seed 72's room 6.
+
+    Both halves are checked: the opening is on that room's own wall, and the
+    passage's entry says so - the log is what has to account for a branch
+    that stops."""
+    found = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for islands in layout.values():
+            for island in islands:
+                rects = _room_rects(island)
+                for exit_ in island["room_exits"]:
+                    if not exit_.get("secret"):
+                        continue
+                    rect = rects.get(exit_["room_id"])
+                    assert rect is not None, "a secret entrance on a room that isn't drawn"
+                    assert _on_boundary((exit_["x"], exit_["y"]), rect), (
+                        f"seed {seed}: secret entrance to #{exit_['room_id']} at "
+                        f"({exit_['x']},{exit_['y']}) is not on its wall {rect}"
+                    )
+                    found += 1
+        said = [
+            n for n in dungeon.all_nodes()
+            if any("ingresso segreto" in line for line in n.lines)
+        ]
+        for node in said:
+            assert node.kind == "passage"
+    assert found > 5, f"expected the sweep to hit some of these, found {found}"
+
+
+def test_corridors_hardly_ever_run_through_a_rooms_floor():
+    """The other half of the same draw-order rule: a room is not placed where
+    a corridor already runs. Between the two, corridor cells sitting inside a
+    room's floor went from 11.9% to under 1%.
+
+    A bound rather than zero, deliberately. What is left is a passage that
+    began inside a room because whatever dispatched it was already in there,
+    and dead-end stubs, which are drawn without going through the same
+    clipping. Both are worth fixing and neither is worth pretending is fixed;
+    the bound is here so the number cannot quietly climb back."""
+    total = inside = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                room_cells = {}
+                for rect in _room_rects(island).items():
+                    room_id, (rx0, ry0, rx1, ry1) = rect
+                    for gx in range(int(rx0), int(rx1)):
+                        for gy in range(int(ry0), int(ry1)):
+                            room_cells[(gx, gy)] = room_id
+                for corridor in island["corridors"]:
+                    cells = _cells_of(corridor["points"])
+                    total += len(cells)
+                    inside += sum(1 for c in cells if c in room_cells)
+    assert total > 1000
+    assert inside / total < 0.02, f"{inside} of {total} corridor cells sit inside a room"

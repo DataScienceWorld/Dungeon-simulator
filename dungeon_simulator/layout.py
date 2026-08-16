@@ -144,10 +144,83 @@ def _mark_branch_not_drawn(node) -> None:
                 descendant.lines.append(_NOT_DRAWN)
 
 
+def _segment_cells(a, b):
+    """The cells an axis-aligned segment between two lattice points occupies.
+
+    Same convention as everything else here: a run from lattice 4 to 7 claims
+    cells 4, 5 and 6 - the cell is the square *after* the line."""
+    (ax, ay), (bx, by) = a, b
+    if ay == by and ax != bx:
+        return {(gx, int(ay)) for gx in range(int(min(ax, bx)), int(max(ax, bx)))}
+    if ax == bx and ay != by:
+        return {(int(ax), gy) for gy in range(int(min(ay, by)), int(max(ay, by)))}
+    return set()
+
+
+def _clip_at_placed_room(x, y, nx, ny, occupied):
+    """Stop a move at the wall of the first already-placed room it runs into.
+
+    Returns (cx, cy, room_id, wall) - or (nx, ny, None, None) when the move
+    reaches nothing. `wall` is the compass side of the room that was struck.
+
+    Worked in cells, because that is what gets drawn: a run east from lattice
+    x to nx claims columns x..nx-1, and a room with corners [rx0, rx1] owns
+    columns rx0..rx1-1. The corridor is therefore stopped at the lattice line
+    of the first room column it would otherwise claim, which is exactly the
+    room's wall - it arrives against it rather than eating into the floor.
+
+    Only rooms already on the map count. Draw order is the whole point: a room
+    that comes later has to find space around what is already there (it is not
+    placed if it can't), while a passage arriving afterwards is the one that
+    has to stop."""
+    if (nx, ny) == (x, y):
+        return nx, ny, None, None
+    best = None
+    for rx0, ry0, rx1, ry1, room_id in occupied:
+        if ny == y:
+            if not (ry0 <= y < ry1):  # different row: cannot meet
+                continue
+            if nx > x:
+                hit = max(x, rx0)                      # first room column claimed
+                if hit > min(nx - 1, rx1 - 1):
+                    continue
+                edge, wall = hit, "W"
+            else:
+                hit = min(x - 1, rx1 - 1)              # travelling the other way
+                if hit < max(nx, rx0):
+                    continue
+                edge, wall = hit + 1, "E"
+            candidate = (edge, y, room_id, wall)
+            key = abs(edge - x)
+        elif nx == x:
+            if not (rx0 <= x < rx1):
+                continue
+            if ny > y:
+                hit = max(y, ry0)
+                if hit > min(ny - 1, ry1 - 1):
+                    continue
+                edge, wall = hit, "N"
+            else:
+                hit = min(y - 1, ry1 - 1)
+                if hit < max(ny, ry0):
+                    continue
+                edge, wall = hit + 1, "S"
+            candidate = (x, edge, room_id, wall)
+            key = abs(edge - y)
+        else:
+            continue
+        if best is None or key < best[0]:
+            best = (key, candidate)
+    if best is None:
+        return nx, ny, None, None
+    return best[1]
+
+
 def _new_island() -> dict:
     return {
         "rooms": [], "corridors": [], "doors": [], "stairs": [], "portals": [], "caps": [],
         "links": [], "room_exits": [], "origin": (0.0, 0.0), "is_entrance": False, "_occupied": [],
+        "_route_cells": set(),
     }
 
 
@@ -181,7 +254,7 @@ def _segment_crosses_room(p0, p1, bbox, pad: float = 0.05) -> bool:
     meets the room it's actually going to)."""
     x0, y0 = p0
     x1, y1 = p1
-    bx0, by0, bx1, by1 = bbox
+    bx0, by0, bx1, by1 = bbox[:4]
     if abs(x0 - x1) < 1e-9:
         if not (bx0 + pad < x0 < bx1 - pad):
             return False
@@ -340,12 +413,27 @@ class _Layout:
         if kind == "passage":
             return self._walk_passage(node, x, y, heading, level, island, path)
         if kind == "door":
-            length = _cells(node.geo.get("length_ft", 5))
+            # A door goes *on the wall*: it is the threshold you cross, not a
+            # stretch of corridor, so it claims no cell of its own and the
+            # walk does not advance through it.
+            #
+            # It used to. Every door the tables roll is 5ft (419 of 419 across
+            # 40 seeds), and the rule that a 5ft feature becomes a full 10ft
+            # cell was being applied to them too - so a door in a wall, a
+            # passage with no length of its own, and a second door came out as
+            # three separate 10ft cells in a row. That is the "strettoia"
+            # reported west of seed 72's room 6, and it is 30ft of map for
+            # what the dice called 5 + 0 + 5.
+            #
+            # The recorded segment is unchanged - still one grid unit along
+            # the heading - because that is what tells the marker which wall
+            # line it sits on, and what every reader of a door (the overlay's
+            # marker geometry, the bridge's door_cells and _door_type_at)
+            # already expects. What changed is only that the door shares that
+            # cell with whatever is beyond it, rather than taking it first.
             dx, dy = _VECTORS[heading]
-            nx, ny = x + dx * length, y + dy * length
-            door = {"id": node.id, "x1": x, "y1": y, "x2": nx, "y2": ny, "lines": node.lines}
+            door = {"id": node.id, "x1": x, "y1": y, "x2": x + dx, "y2": y + dy, "lines": node.lines}
             island["doors"].append(door)
-            path.points.append((nx, ny))
             path.doors.append(door)
             for child in node.children:
                 # No gap can open up here to be bridged. This used to append a
@@ -357,7 +445,7 @@ class _Layout:
                 # a different position is a passage, which reports the far end
                 # of everything it walked; joining the door to *that* drew a
                 # diagonal across the map, which is not a corridor at all.
-                self._enter(child, nx, ny, heading, level, island, False, path)
+                self._enter(child, x, y, heading, level, island, False, path)
             return x, y
         if kind == "stairs":
             length = _cells(node.geo.get("length_ft", 10))
@@ -385,6 +473,7 @@ class _Layout:
                 "id": f"cap{node.id}", "points": [(x, y), (sx, sy)],
                 "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "lines": [],
             })
+            island["_route_cells"] |= _segment_cells((x, y), (sx, sy))
             island["caps"].append({"id": node.id, "x": sx, "y": sy, "kind": kind, "lines": node.lines})
             return x, y
         return x, y
@@ -422,11 +511,43 @@ class _Layout:
             key=abs,
         )
 
+        # Every corridor cell already drawn, this room's own approach
+        # included. Excluding its own route was tried and is not worth it: a
+        # corridor stops at the wall, so the leg leading in never overlaps the
+        # room anyway, and all the exclusion really permitted was a room
+        # landing on an *earlier* stretch of the same corridor - the one that
+        # ran past the spot and turned. It saved 7 rooms of 713 and tripled
+        # the cells left sitting inside a floor, 0.8% to 2.2%.
+        blocking = island["_route_cells"]
+
+        def _sits_on_a_corridor(rect):
+            """Whether a candidate footprint would cover a cell some corridor
+            already runs down.
+
+            The other half of the same draw-order rule: a passage laid first
+            owns the ground, and a room that would have to be built on top of
+            it is simply not placed. Checked against the corridor's *cells*,
+            so a corridor merely arriving at the room's wall - which is what
+            every entrance looks like - does not count as being under it.
+
+            Without this, 103 of the 147 remaining corridor cells inside a
+            room's floor came from a room dropped on top of a corridor that
+            was already there."""
+            rx0, ry0, rx1, ry1 = rect
+            return any(
+                (gx, gy) in blocking
+                for gx in range(int(rx0), int(rx1))
+                for gy in range(int(ry0), int(ry1))
+            )
+
         def first_clear(entry_x, entry_y):
             for offset in offsets:
                 candidate = _room_aabb(entry_x, entry_y, dx, dy, px, py, w, depth, offset)
-                if not any(_overlaps(candidate, other, ROOM_MARGIN) for other in occupied):
-                    return offset, candidate
+                if any(_overlaps(candidate, other, ROOM_MARGIN) for other in occupied):
+                    continue
+                if _sits_on_a_corridor(candidate):
+                    continue
+                return offset, candidate
             return None, None
 
         lateral, footprint = first_clear(x, y)
@@ -471,7 +592,9 @@ class _Layout:
                 # occasion it doesn't clear everything.
                 path.points.extend(_detour_around(prev, (x, y), blockers))
 
-        occupied.append(footprint)
+        # Kept with the room's own id: a passage that later runs into this
+        # footprint has to be able to say *which* room it broke into.
+        occupied.append((*footprint, node.id))
 
         # Everything below is the room's own geometry, so it hangs off the
         # middle of its entry wall (mid_x, mid_y) rather than off the doorway
@@ -570,8 +693,39 @@ class _Layout:
         width = _cells(node.geo.get("width_ft", DEFAULT_PASSAGE_WIDTH_FT))
         runs = [{"width": width, "points": [(x, y)]}]
         children = iter(node.children)
+        pending = None  # a child pulled from the iterator but not dispatched
         had_child = False
         moved = False  # has the *current* run actually advanced yet?
+
+        broke_into = None  # (room_id, wall) once this passage reaches a room already drawn
+
+        def advance(length):
+            """Walk `length` cells along the heading, stopping at the wall of
+            any room already on the map.
+
+            Draw order decides who gives way. A room is placed only where it
+            fits around what is already there; a passage laid down afterwards
+            has to stop at the first room it reaches instead of running
+            through its floor. It used to run straight on: 318 of 2673
+            corridor cells across 40 seeds (11.9%) sat inside a room's floor,
+            which dungeongen then drew as passage - a notch eaten out of the
+            wall, opening onto nothing."""
+            nonlocal x, y, moved, broke_into
+            dx, dy = _VECTORS[heading]
+            nx, ny = x + dx * length, y + dy * length
+            cx, cy, room_id, wall = _clip_at_placed_room(x, y, nx, ny, island["_occupied"])
+            if (cx, cy) != (x, y):
+                # Claimed as it is walked, not when the node finishes: a room
+                # placed by one of this passage's own children would otherwise
+                # not see the corridor it is standing on.
+                island["_route_cells"] |= _segment_cells((x, y), (cx, cy))
+                x, y = cx, cy
+                runs[-1]["points"].append((x, y))
+                path.points.append((x, y))
+                moved = True
+            if room_id is not None:
+                broke_into = (room_id, wall, (cx, cy))
+            return room_id is None
 
         def ensure_min_length():
             # Several rolls (a door/stairs "in the wall" with no length of
@@ -581,24 +735,15 @@ class _Layout:
             # space of its own. A passage is a place, not just a hinge
             # between two others, so it always advances by at least one 5ft
             # square before whatever comes next.
-            nonlocal x, y, moved
             if moved:
-                return
-            dx, dy = _VECTORS[heading]
-            x, y = x + dx * _cells(DEFAULT_PASSAGE_WIDTH_FT), y + dy * _cells(DEFAULT_PASSAGE_WIDTH_FT)
-            runs[-1]["points"].append((x, y))
-            path.points.append((x, y))
-            moved = True
+                return True
+            return advance(_cells(DEFAULT_PASSAGE_WIDTH_FT))
 
         for event in node.geo.get("events", []):
             etype = event["type"]
             if etype == "move":
-                length = _cells(event["length_ft"])
-                dx, dy = _VECTORS[heading]
-                x, y = x + dx * length, y + dy * length
-                runs[-1]["points"].append((x, y))
-                path.points.append((x, y))
-                moved = True
+                if not advance(_cells(event["length_ft"])):
+                    break
             elif etype == "turn":
                 # A turn with nothing walked yet ("door in the left wall",
                 # rolled with no length of its own) still means the passage
@@ -608,7 +753,8 @@ class _Layout:
                 # the minimum-length floor in the *new* heading instead would
                 # put the passage on top of the door's own far side, with
                 # nothing distinct at the room's exit at all.
-                ensure_min_length()
+                if not ensure_min_length():
+                    break
                 heading = _rotate(heading, event["dir"])
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
@@ -621,7 +767,8 @@ class _Layout:
                 # opening on the right" drew as a single 10ft stub.
                 moved = False
             elif etype == "resize":
-                ensure_min_length()
+                if not ensure_min_length():
+                    break
                 # A rulebook "narrows" roll floors at 5ft and "widens" floors
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
@@ -633,7 +780,12 @@ class _Layout:
                 if child is None:
                     continue
                 had_child = True
-                ensure_min_length()
+                if not ensure_min_length():
+                    # Already pulled off the iterator, so the cleanup below
+                    # would never see it: hand it back explicitly or this one
+                    # child ends up neither drawn nor accounted for.
+                    pending = child
+                    break
                 turn = event.get("turn")
                 child_heading = _rotate(heading, turn)
                 child.geo["approach_heading"] = child_heading
@@ -678,13 +830,62 @@ class _Layout:
                 # dungeongen cannot route.
                 if event.get("portal"):
                     island["portals"].append({"id": node.id, "x": x, "y": y, "lines": node.lines})
-        for child in children:  # any child without a matching event (shouldn't normally happen)
-            had_child = True
-            ensure_min_length()
-            self._enter(child, x, y, heading, level, island, False, path)
-        if not had_child:
-            ensure_min_length()
-            island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
+        if broke_into is not None:
+            # The passage has reached a room that was already on the map. It
+            # stops against that wall and opens into it - a way in nobody
+            # planned, so a secret one, which is what the rules call a passage
+            # you arrive at a room by from an unexpected side.
+            #
+            # Recorded as one of that room's exits so the renderer punches a
+            # real breach in the wall, exactly as it does for the room's own
+            # openings. Everything past this point of the branch is not drawn:
+            # it would carry on inside the room.
+            room_id, wall, stop = broke_into
+            rect = next((r for r in island["_occupied"] if r[4] == room_id), None)
+            on_wall = rect is not None and (
+                stop[0] in (rect[0], rect[2]) or stop[1] in (rect[1], rect[3])
+            )
+            if on_wall:
+                island["room_exits"].append(
+                    # `wall` is already the room's own side - the passage arrives
+                    # heading east and strikes the room's *west* wall - and an exit's
+                    # direction is the way its opening faces out of the room, so it is
+                    # that side verbatim. Recording the opposite put every one of these
+                    # openings on the far wall of the room.
+                    {"room_id": room_id, "x": stop[0], "y": stop[1],
+                     "direction": wall, "secret": True}
+                )
+                node.lines.append(
+                    f"[Layout] Questo passaggio arriva contro la parete {wall} della stanza "
+                    f"#{room_id}, gia' disegnata sulla mappa: vi si apre come ingresso segreto "
+                    f"e il ramo si interrompe qui (il contenuto resta comunque nel registro)."
+                )
+            else:
+                # No wall to stop against: this passage began inside the room's
+                # own floor, because whatever dispatched it was already in
+                # there. There is no breach to punch - it is simply somewhere
+                # the map has no room for.
+                node.lines.append(
+                    f"[Layout] Questo passaggio parte gia' dentro la stanza #{room_id}, "
+                    f"gia' disegnata sulla mappa: non viene tracciato e il ramo si interrompe "
+                    f"qui (il contenuto resta comunque nel registro)."
+                )
+            # Only what is left to walk. Children dispatched before the passage
+            # ran into the room are on the map already, and marking the whole
+            # node's subtree told 43 rooms across the sweep that they were not
+            # drawn while they plainly were.
+            for remaining in ([pending] if pending is not None else []) + list(children):
+                for descendant in remaining.walk():
+                    if descendant.kind in ("room", "passage", "door", "stairs"):
+                        descendant.lines.append(_NOT_DRAWN)
+        else:
+            for child in children:  # any child without a matching event (shouldn't normally happen)
+                had_child = True
+                ensure_min_length()
+                self._enter(child, x, y, heading, level, island, False, path)
+            if not had_child:
+                ensure_min_length()
+                island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
         for i, run in enumerate(runs):
             # A "turn" records a point without moving (it just changes heading
             # in place), so a passage that turns before its first move - or one

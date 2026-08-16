@@ -72,41 +72,56 @@ direction and ignores this field - but it is wrong, and it will bite whenever
 something starts reading it. The direction should come from where the passage
 actually goes, not from a comparison against the room's centre.
 
-## 4. Passage intersections (feature, not a bug)
+## 4. Passage intersections - two of the three cases done
 
-Requested behaviour, only partly implemented. When a passage runs into
-something already on the map, it should connect there rather than stop, and
-the log should say so. Draw order decides which of the three cases applies:
+Draw order decides which case applies:
 
-- a **room** that doesn't fit because a passage is already there → the room is
-  not placed (this part already happens);
-- a **passage arriving at a room that is already drawn** → the passage becomes
-  an additional entrance to it, a secret one;
-- a **passage crossing another passage** → that branch finishes generating,
-  and the two form a crossing.
+- a **room** that doesn't fit because a passage is already there → **done**:
+  a candidate footprint covering a cell some corridor already runs down is
+  rejected, and if no position along the entry wall is clear the room is not
+  placed (and says so in its own entry). The claim that this "already
+  happened" was wrong - placement only ever checked room against room.
+- a **passage arriving at a room already drawn** → **done**: it stops at that
+  wall and is recorded as a secret entrance to the room, with the log saying
+  which room it broke into; everything past that point of the branch is not
+  drawn.
+- a **passage crossing another passage** → still only handled at a branch's
+  own *takeoff*, not where one runs into another at its far end.
 
-The machinery for the third case now exists but is only used at a branch's
-*takeoff*. `_claim_takeoff_cell` extends a branch back one cell so it shares
-the cell it leaves from, because dungeongen's adapter only calls a cell a
-crossing when two passages occupy the same cell - short of that it walls them
-apart. A branch that runs into another corridor at its *far* end still gets
-no such treatment, so a crossing the generator never declared is still drawn
-as two separate corridors. The same helper should extend to that end once the
-layout decides what an arriving passage means (an intersection to record in
-the log, not just cells to merge).
+Between the first two, corridor cells sitting inside a room's floor went from
+11.9% to 0.79% (40 seeds). What is left is a passage that *began* inside a
+room - because whatever dispatched it was already in there - and dead-end
+stubs, which move without going through the same clipping.
 
-## 5. Rooms that find nowhere to go are up to 16%
+Cost: rooms with nowhere to go went 16.0% → 30.6%. Rooms and corridors now
+compete for the same ground and the corridor, being there first, wins. The
+lever is not the rule but how little freedom a room has: it only tries
+positions along the wall it was entered from, so shortening its corridor or
+letting it sit further along would find space for many of them.
 
-Was 13.2% (60 seeds x 2 depths). The wall-feature rows now give the passage a
-50% chance of carrying on past a door or an opening rather than stopping
-there, so passages run longer and the map gets more crowded: 114 rooms of 713
-have no clear spot along their own entry wall, against 90 of 684 before.
+### Arm-to-arm through a crossing
+
+`_claim_takeoff_cell` extends a branch back onto the cell it leaves from, so
+every arm shares a cell with its trunk - dungeongen's adapter only calls a
+cell a crossing when two passages occupy the same one. Each arm is therefore
+connected to the junction. Walking *between* two arms through the junction
+still is not guaranteed: where several passages overlap that cell, the
+adapter sometimes leaves their segments unconnected to each other. That is
+inside its own `_convert_passage` splitting, and it is what
+`test_the_four_way_is_one_connected_region_in_dungeongens_own_model` stops
+short of asserting.
+
+## 5. Rooms that find nowhere to go are up to 30.6%
+
+218 of 713 (60 seeds x 2 depths), from 13.2% earlier in this work. Two things
+pushed it: the wall-feature rows now let a passage carry on past a door
+(longer passages, more crowding), and a room is no longer placed on ground a
+corridor already occupies - see item 4 for both.
 
 Each one says so in its own log entry, which is the invariant that matters,
-but they are still rooms the dice rolled and the map does not show. The lever
-is not the margin (already 0) - it is that a room only ever tries positions
-along the wall it was entered from. Letting it try the far side of its own
-corridor, or shortening the corridor, would find room for some of them.
+but they are still rooms the dice rolled that the map does not show. The
+margin is not the lever (it is already 0); the lever is how little freedom a
+room has - it only ever tries positions along the wall it was entered from.
 
 ## 6. One link in 211 still meets its rooms only at a corner
 
@@ -147,14 +162,14 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - every corridor the layout drew reaches dungeongen (or is already covered,
   cell for cell, by something that did)
 - every link starts on its from-room's wall and ends on its to-room's
+- a secret entrance opened by an arriving passage sits on that room's wall
 - no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
-713 rooms, 114 of them unplaceable (16.0%), 28442 coordinates, 4869 segments,
-937 room pairs, 1169 exits, 157 links - all clean. Hang sweep: 1987 islands,
-0 hangs, 2 refusals which are all the deliberate size guard. Levels drawn by
-dungeongen: 127 of 128 (99%) - the one that falls back has an island past the
-size limit, which is the guard doing its job.
+713 rooms, 218 of them unplaceable (30.6%), 22194 coordinates, 3521 segments,
+627 room pairs, 1015 exits, 120 links - all clean. Corridor cells inside a
+room's floor: 0.79%. Hang sweep: 1659 islands, 0 hangs, 0 refusals. Levels
+drawn by dungeongen: 120 of 120 (100%).
 
 Run the hang sweep with **empty islands included**. It used to skip them
 (`if not island["rooms"]: continue`) - which is exactly where the segfault in

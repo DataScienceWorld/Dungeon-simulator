@@ -230,7 +230,7 @@ def _path_cells(waypoints: list[tuple]) -> set[tuple]:
     return cells
 
 
-def _claim_takeoff_cell(waypoints: list[tuple], other_cells: set[tuple]) -> list[tuple]:
+def _claim_takeoff_cell(waypoints, other_cells, heading=None, takeoff=None):
     """Extend a branch back one cell so it shares the cell it takes off from.
 
     dungeongen's adapter only calls a cell a crossing when two passages
@@ -249,12 +249,37 @@ def _claim_takeoff_cell(waypoints: list[tuple], other_cells: set[tuple]) -> list
 
     Only the cell directly behind the first one counts. A branch that happens
     to run alongside some other corridor touches its cells too, and joining
-    those would knock a hole in a wall the map never said was open."""
-    (fx, fy), (nx, ny) = waypoints[0], waypoints[1]
-    back = (fx - _sign(nx - fx), fy - _sign(ny - fy))
-    if back == waypoints[0] or back not in other_cells:
-        return waypoints
-    return [back, *waypoints]
+    those would knock a hole in a wall the map never said was open.
+
+    `heading` is the branch's own direction of travel, taken from its raw
+    points. It is needed because a branch one cell long has both waypoints on
+    that same cell, so there is nothing in the waypoints to say which way it
+    went - and such a branch, left unclaimed, is exactly an arm walled off
+    from its own crossing."""
+    first = waypoints[0]
+    candidates = []
+    if takeoff is not None:
+        # The four cells that meet at the lattice point the branch leaves
+        # from, keeping the ones actually beside its first cell. This is the
+        # flank takeoff: a branch turning off a trunk starts against its side,
+        # so the trunk is *perpendicular* to the branch's own direction, not
+        # behind it. Tried first because it is the case that was broken - an
+        # arm leaving a crossing sideways found the cell behind it belonged to
+        # the opposite arm, joined that, and left both walled off from the
+        # trunk they came from.
+        tx, ty = _grid(takeoff[0]), _grid(takeoff[1])
+        candidates += [
+            cell for cell in ((tx - 1, ty - 1), (tx, ty - 1), (tx - 1, ty), (tx, ty))
+            if abs(cell[0] - first[0]) + abs(cell[1] - first[1]) == 1
+            and (heading is None or cell != (first[0] - heading[0], first[1] - heading[1]))
+        ]
+    (nx, ny) = waypoints[1]
+    step = heading if heading and any(heading) else (_sign(nx - first[0]), _sign(ny - first[1]))
+    candidates.append((first[0] - step[0], first[1] - step[1]))
+    for back in candidates:
+        if back != first and back in other_cells:
+            return [back, *waypoints]
+    return waypoints
 
 
 def _sign(v: int) -> int:
@@ -512,8 +537,23 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         covered_exits.add((link["from_room"], round(link["points"][0][0], 3), round(link["points"][0][1], 3)))
 
         points = _dedupe(link["points"])
-        if len(points) < 2:
+        if not points:
             continue
+        if len(points) == 1:
+            # Two rooms sharing a wall with a door in it. Now that a door sits
+            # *on* the wall rather than taking a cell, the entire link is that
+            # one threshold, so its path collapses to a single point - which is
+            # 98 of the 156 resolved links across 40 seeds, not a corner case.
+            # Dropping them (what the old `len(points) < 2` guard did) left
+            # most adjacent rooms drawn with no way between them at all.
+            #
+            # Handing the cell over is right rather than a workaround:
+            # dungeongen's adapter treats a Door as *the* element for the cell
+            # it occupies and creates no passage when doors cover the whole
+            # path ("No passage needed - doors/exits cover all cells"), and
+            # Map._trace_connected_region walks through an open door, so the
+            # two rooms come out genuinely connected.
+            points = [points[0], points[0]]
         waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2:
             continue
@@ -613,11 +653,22 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
             continue
+        # From the branch's *first leg*, not end to end: a corridor that turns
+        # has both components non-zero that way, which puts the takeoff cell
+        # diagonally behind it - and dungeongen rejects the 2x2 passage that
+        # makes ("Passage must be exactly one cell wide").
+        heading = (_sign(points[1][0] - points[0][0]), _sign(points[1][1] - points[0][1]))
+        cells = _path_cells(waypoints)
+        # Claimed *before* asking whether this corridor is already drawn, not
+        # after. Corridors are listed in the order the walk finished them, so a
+        # grandchild is appended before the arm it hangs off: the grandchild
+        # claimed the arm's only cell, the arm then looked entirely covered and
+        # was dropped - taking with it the one thing that joined the crossing
+        # to its own trunk.
+        waypoints = _claim_takeoff_cell(waypoints, route_cells - cells, heading, points[0])
         cells = _path_cells(waypoints)
         if cells <= drawn_cells:
             continue
-        waypoints = _claim_takeoff_cell(waypoints, route_cells - cells)
-        cells = _path_cells(waypoints)
         if dungeon.add_passage(_DGPassage(
             start_room=f"branch{index}a", end_room=f"branch{index}b",
             waypoints=waypoints, width=1,
