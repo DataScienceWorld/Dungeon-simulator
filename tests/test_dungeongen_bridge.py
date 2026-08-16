@@ -479,3 +479,48 @@ def test_the_four_way_is_one_connected_region_in_dungeongens_own_model():
             f"the arm at {cell} is walled off from the junction {junction}: "
             f"it is in {sorted(hits)}, the junction in {sorted(junction_regions)}"
         )
+
+
+def test_two_rooms_joined_by_a_door_keep_the_wall_between_them():
+    """An open door is not just a different glyph in dungeongen: its own
+    region tracing walks straight through one, so the two rooms collapse into
+    a single region and the wall between them is never drawn - they read as
+    one big room.
+
+    Now that a door takes no cell of its own, two rooms joined by nothing but
+    a door share a wall, and that is exactly when it matters. The link's own
+    cell and the door's sit on opposite sides of that shared wall, so the
+    cell comparison that decides the door's type never matched and every one
+    of them came over OPEN. Seed 72's rooms 1 and 10 - joined by a *secret*
+    door, of all things - were drawn merged.
+
+    A secret door also has to say so: dungeongen has a type for it, and a
+    secret door that reads as an opening is not a secret door."""
+    checked = secrets = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                placed = {room["id"] for room in island["rooms"]}
+                threshold_links = [
+                    link for link in island["links"]
+                    if link["from_room"] in placed and link["to_room"] in placed
+                    and link["doors"] and len(bridge._dedupe(link["points"])) == 1
+                ]
+                if not threshold_links:
+                    continue
+                for link in threshold_links:
+                    for end in bridge.link_end_cells(link):
+                        kind = bridge._door_type_at(link, end)
+                        assert kind.name != "OPEN", (
+                            f"seed {seed}: rooms #{link['from_room']} and #{link['to_room']} are "
+                            f"joined by a door but it is handed over OPEN, which erases their wall"
+                        )
+                        if link["doors"][0].get("secret"):
+                            assert kind.name == "SECRET", (
+                                f"seed {seed}: a secret door came over as {kind.name}"
+                            )
+                            secrets += 1
+                        checked += 1
+    assert checked > 50, f"expected plenty of door-only links, found {checked}"
+    assert secrets, "expected at least one secret door among them"

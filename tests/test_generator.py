@@ -199,3 +199,30 @@ def test_every_room_exit_records_its_door_roll():
                     assert not said_door, f"seed {seed}: a passage where the roll said door"
     assert rolls > 500
     assert 0.4 < doors / rolls < 0.6, f"{doors} doors out of {rolls} rolls"
+
+
+def test_a_side_passage_forks_two_ways():
+    """"Passage continues N ft, then a side passage leads off to the left" is
+    a junction: you take the side passage or you carry straight on past it.
+
+    Carrying on used to be folded back into the same node - the passage simply
+    took its next roll - so the log recorded the side passage as the only
+    thing that happened and the choice was nowhere to be read. Both ways on
+    are branches now, the same as at a T-junction or a four-way, and the
+    passage ends at the junction."""
+    checked = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage":
+                continue
+            if not any("side passage leads off" in line for line in node.lines):
+                continue
+            turns = [e.get("turn") for e in node.geo.get("events", []) if e["type"] == "child"]
+            assert turns[-2:] == ["left", None] or turns[-2:] == ["right", None], (
+                f"seed {seed} passage #{node.id}: a side passage should fork into the side "
+                f"and the way straight on, got {turns}"
+            )
+            assert len(node.children) == len(turns)
+            checked += 1
+    assert checked > 20, f"expected plenty of side passages, found {checked}"

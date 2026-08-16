@@ -431,3 +431,50 @@ def test_corridors_hardly_ever_run_through_a_rooms_floor():
                     inside += sum(1 for c in cells if c in room_cells)
     assert total > 1000
     assert inside / total < 0.02, f"{inside} of {total} corridor cells sit inside a room"
+
+
+def test_a_passage_with_no_length_of_its_own_says_so():
+    """A roll can give a passage no length at all - a feature in its own wall,
+    an open entrance to a room, a resize before anything has been walked. The
+    map gives it the minimum 10ft anyway, because a passage is a place and not
+    a hinge, but the log said nothing: the entry read as a door hanging in
+    nothing, with the passage "not existing yet".
+
+    Checked against the map, not just for the presence of a line: whenever the
+    note is there the corridor really is one cell long at that point, and
+    whenever a passage's rolls contain no length the note has to be there."""
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    noted = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        drawn = {}
+        for islands in layout.values():
+            for island in islands:
+                for corridor in island["corridors"]:
+                    drawn.setdefault(corridor["id"], []).append(corridor)
+        for node in dungeon.all_nodes():
+            if node.kind != "passage" or node.id not in drawn:
+                continue
+            has_move = any(e["type"] == "move" for e in node.geo.get("events", []))
+            says = any("minimo di" in line for line in node.lines)
+            if has_move:
+                continue
+            if any("arriva contro la parete" in line or "parte gia' dentro" in line
+                   for line in node.lines):
+                # It ran into a room already on the map before it could take
+                # even the minimum, so it genuinely has no length - and says
+                # that instead, which is the right thing to say.
+                continue
+            assert says, (
+                f"seed {seed}: passage #{node.id} was rolled with no length of its own "
+                f"and its entry never says it still takes the minimum"
+            )
+            cells = set()
+            for corridor in drawn[node.id]:
+                cells |= bridge._path_cells(
+                    bridge._pad_single_cell(bridge._grid_cell_path(corridor["points"])))
+            assert cells, f"seed {seed}: passage #{node.id} claims the minimum but is not drawn"
+            noted += 1
+    assert noted > 20, f"expected plenty of these, found {noted}"

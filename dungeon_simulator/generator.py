@@ -292,10 +292,16 @@ class DungeonGenerator:
                 continue
 
             if tag in ("branch_four_way", "branch_t", "branch_side_left", "branch_side_right"):
-                if tag == "branch_side_left":
-                    branch_dirs = ["left"]
-                elif tag == "branch_side_right":
-                    branch_dirs = ["right"]
+                if tag in ("branch_side_left", "branch_side_right"):
+                    # Two ways on, and the choice between them is the point:
+                    # take the side passage, or carry straight on past it.
+                    # Carrying on used to be folded back into this same node -
+                    # the passage simply took its next roll - so the log showed
+                    # the side passage as the only thing that happened and the
+                    # fork was nowhere to be read. Same treatment as the T and
+                    # the four-way: every way on is a branch of its own, and
+                    # the passage ends at the junction.
+                    branch_dirs = ["left" if tag == "branch_side_left" else "right", None]
                 elif tag == "branch_t":
                     # A T-junction opens onto a perpendicular corridor - left
                     # and right - and there is no "forward" at a T.
@@ -314,11 +320,7 @@ class DungeonGenerator:
                     child = self.dispatch_beyond("passage", level, depth=depth + 1)
                     node.children.append(child)
                     events.append({"type": "child", "turn": branch_dir})
-                if tag in ("branch_t", "branch_four_way"):
-                    return
-                segments += 1
-                if segments >= MAX_PASSAGE_SEGMENTS:
-                    return
+                return
                 continue
 
             if tag == "dead_end_secret":
@@ -502,6 +504,10 @@ class DungeonGenerator:
         node.kind = "door"
         node.lines = lines
         node.geo["length_ft"] = 5
+        # Carried so the renderer can draw it as a secret door - a wall with a
+        # mark, not an opening. Recovering it from the log text downstream
+        # would tie the map to the wording of one table row.
+        node.geo["secret"] = payload["beyond"] == "secret"
         node.children.append(self.dispatch_beyond(payload["beyond"], level, depth=depth + 1))
 
     # -- stairs ---------------------------------------------------------------

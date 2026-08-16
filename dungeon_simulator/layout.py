@@ -432,7 +432,8 @@ class _Layout:
             # already expects. What changed is only that the door shares that
             # cell with whatever is beyond it, rather than taking it first.
             dx, dy = _VECTORS[heading]
-            door = {"id": node.id, "x1": x, "y1": y, "x2": x + dx, "y2": y + dy, "lines": node.lines}
+            door = {"id": node.id, "x1": x, "y1": y, "x2": x + dx, "y2": y + dy,
+                    "secret": bool(node.geo.get("secret")), "lines": node.lines}
             island["doors"].append(door)
             path.doors.append(door)
             for child in node.children:
@@ -737,7 +738,22 @@ class _Layout:
             # square before whatever comes next.
             if moved:
                 return True
-            return advance(_cells(DEFAULT_PASSAGE_WIDTH_FT))
+            before = (x, y)
+            carried_on = advance(_cells(DEFAULT_PASSAGE_WIDTH_FT))
+            if (x, y) != before:
+                # Said out loud, because the reader cannot get it from the
+                # rolls: a passage whose first roll is a feature in its own
+                # wall has no length anywhere in its entry, and looks like a
+                # door hanging in nothing. This is the line that gives it a
+                # body - and where a "widens"/"narrows" roll comes before any
+                # movement, it is also the first of the two 10ft stretches
+                # that end up drawn.
+                node.lines.append(
+                    f"[Layout] Il tiro non dava lunghezza propria al passaggio: sulla mappa "
+                    f"percorre comunque il minimo di {round(FT_PER_UNIT)}ft "
+                    f"prima di cio' che segue."
+                )
+            return carried_on
 
         for event in node.geo.get("events", []):
             etype = event["type"]
@@ -830,6 +846,20 @@ class _Layout:
                 # dungeongen cannot route.
                 if event.get("portal"):
                     island["portals"].append({"id": node.id, "x": x, "y": y, "lines": node.lines})
+        if broke_into is None:
+            for child in children:  # a child with no matching event (shouldn't normally happen)
+                had_child = True
+                if not ensure_min_length():
+                    pending = child
+                    break
+                self._enter(child, x, y, heading, level, island, False, path)
+            if not had_child and ensure_min_length():
+                island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end",
+                                       "lines": node.lines})
+        # Checked after those too, not only after the event loop. Both of them
+        # can be the moment the passage first tries to move, so both can be
+        # where it runs into a room - and a break-in reported nowhere left the
+        # entry with neither a length nor a reason for not having one.
         if broke_into is not None:
             # The passage has reached a room that was already on the map. It
             # stops against that wall and opens into it - a way in nobody
@@ -842,9 +872,13 @@ class _Layout:
             # it would carry on inside the room.
             room_id, wall, stop = broke_into
             rect = next((r for r in island["_occupied"] if r[4] == room_id), None)
-            on_wall = rect is not None and (
-                stop[0] in (rect[0], rect[2]) or stop[1] in (rect[1], rect[3])
-            )
+            # Against the wall actually struck, not just any edge. Accepting
+            # any of the four let a passage that began inside the room report
+            # a west entrance at a point that merely happened to sit on the
+            # room's north edge.
+            on_wall = rect is not None and stop[
+                {"W": 0, "E": 0, "N": 1, "S": 1}[wall]
+            ] == rect[{"W": 0, "E": 2, "N": 1, "S": 3}[wall]]
             if on_wall:
                 island["room_exits"].append(
                     # `wall` is already the room's own side - the passage arrives
@@ -878,14 +912,6 @@ class _Layout:
                 for descendant in remaining.walk():
                     if descendant.kind in ("room", "passage", "door", "stairs"):
                         descendant.lines.append(_NOT_DRAWN)
-        else:
-            for child in children:  # any child without a matching event (shouldn't normally happen)
-                had_child = True
-                ensure_min_length()
-                self._enter(child, x, y, heading, level, island, False, path)
-            if not had_child:
-                ensure_min_length()
-                island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end", "lines": node.lines})
         for i, run in enumerate(runs):
             # A "turn" records a point without moving (it just changes heading
             # in place), so a passage that turns before its first move - or one

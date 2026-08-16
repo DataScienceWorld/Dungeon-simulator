@@ -329,10 +329,27 @@ def _door_type_at(link: dict, end_cell: tuple) -> "_DGDoorType":
     region and the wall between them is never drawn at all. A corridor
     running alongside the room it leaves then reads as part of that room
     rather than as a separate passage."""
-    for door in link["doors"]:
+    doors = link["doors"]
+    if len(_dedupe(link["points"])) == 1 and doors:
+        # The whole link *is* one threshold - two rooms sharing a wall with a
+        # door in it - so there is nothing else it could be and no cell to
+        # compare. Comparing anyway got it wrong every time: the link's own
+        # cell and the door's sit on opposite sides of that shared wall (the
+        # link takes the cell its point falls in, the door the cell it heads
+        # into), so the match failed, the door came over OPEN, and dungeongen
+        # merged the two rooms into one region and drew no wall between them.
+        return _door_kind(doors[0])
+    for door in doors:
         if end_cell in door_cells(door):
-            return _DGDoorType.CLOSED
+            return _door_kind(door)
     return _DGDoorType.OPEN
+
+
+def _door_kind(door: dict) -> "_DGDoorType":
+    """A secret door reads as a wall with a mark on it, not as an opening -
+    which is the whole point of one. dungeongen has a type for it; we were
+    handing every door over as merely closed."""
+    return _DGDoorType.SECRET if door.get("secret") else _DGDoorType.CLOSED
 
 
 def _door_direction(point, x0: int, y0: int, x1: int, y1: int) -> str:

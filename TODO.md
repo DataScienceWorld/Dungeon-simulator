@@ -89,11 +89,11 @@ Draw order decides which case applies:
   own *takeoff*, not where one runs into another at its far end.
 
 Between the first two, corridor cells sitting inside a room's floor went from
-11.9% to 0.79% (40 seeds). What is left is a passage that *began* inside a
+11.9% to 1.27% (40 seeds). What is left is a passage that *began* inside a
 room - because whatever dispatched it was already in there - and dead-end
 stubs, which move without going through the same clipping.
 
-Cost: rooms with nowhere to go went 16.0% → 30.6%. Rooms and corridors now
+Cost: rooms with nowhere to go went 16.0% → 20.3%. Rooms and corridors now
 compete for the same ground and the corridor, being there first, wins. The
 lever is not the rule but how little freedom a room has: it only tries
 positions along the wall it was entered from, so shortening its corridor or
@@ -111,9 +111,9 @@ inside its own `_convert_passage` splitting, and it is what
 `test_the_four_way_is_one_connected_region_in_dungeongens_own_model` stops
 short of asserting.
 
-## 5. Rooms that find nowhere to go are up to 30.6%
+## 5. Rooms that find nowhere to go are up to 20.3%
 
-218 of 713 (60 seeds x 2 depths), from 13.2% earlier in this work. Two things
+140 of 688 (60 seeds x 2 depths), from 13.2% earlier in this work. Two things
 pushed it: the wall-feature rows now let a passage carry on past a door
 (longer passages, more crowding), and a room is no longer placed on ground a
 corridor already occupies - see item 4 for both.
@@ -163,13 +163,17 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
   cell for cell, by something that did)
 - every link starts on its from-room's wall and ends on its to-room's
 - a secret entrance opened by an arriving passage sits on that room's wall
+- two rooms joined by nothing but a door keep the wall between them (an
+  *open* door in dungeongen merges their regions and erases it)
+- a passage rolled with no length of its own says in the log that it still
+  takes the minimum 10ft
 - no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
-713 rooms, 218 of them unplaceable (30.6%), 22194 coordinates, 3521 segments,
-627 room pairs, 1015 exits, 120 links - all clean. Corridor cells inside a
-room's floor: 0.79%. Hang sweep: 1659 islands, 0 hangs, 0 refusals. Levels
-drawn by dungeongen: 120 of 120 (100%).
+688 rooms, 140 of them unplaceable (20.3%), 24732 coordinates, 3982 segments,
+809 room pairs, 1136 exits, 142 links - all clean. Corridor cells inside a
+room's floor: 1.27%. Hang sweep: 1630 islands, 0 hangs, 2 size refusals.
+Levels drawn by dungeongen: 126 of 126 (100%).
 
 Run the hang sweep with **empty islands included**. It used to skip them
 (`if not island["rooms"]: continue`) - which is exactly where the segfault in
