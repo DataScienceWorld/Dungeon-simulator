@@ -89,6 +89,14 @@ Draw order decides which case applies:
   puts the same "S" on it that a secret door gets. Seed 72 has ten of them
   against two secret doors, which is why marking only the doors was not
   enough - passage 15's break-in to room 14 read as a normal doorway.
+  It is also no longer handed over *at all*. dungeongen's `Exit` is not a
+  neutral wall breach - its own docstring calls it "a skewed inverted U
+  archway extending away from the dungeon", and it draws that: a perspective
+  archway sticking out of the wall, announcing the way out. Removing it
+  leaves the wall solid, which is what a hidden way in should look like and
+  the same rule a secret door already follows. A side effect worth having:
+  the adapter excludes exit cells from passages, so the arriving corridor
+  gets back the cell the archway was eating (item 2, for this case).
 - a **passage crossing another passage** → still only handled at a branch's
   own *takeoff*, not where one runs into another at its far end.
 
@@ -114,6 +122,23 @@ adapter sometimes leaves their segments unconnected to each other. That is
 inside its own `_convert_passage` splitting, and it is what
 `test_the_four_way_is_one_connected_region_in_dungeongens_own_model` stops
 short of asserting.
+
+## 4b. A secret entrance on a hole the room already has
+
+7 of 72 secret entrances (60 seeds, 9.7%) land on a spot where the room
+*already* declares an ordinary opening - same room, same cell. Seed 1's room
+313 has both a plain exit and a secret break-in at (67, 13).
+
+Nothing is hidden there: the wall is already open, and the overlay puts an
+"S" on a visible doorway. The log says "ingresso segreto" about it too.
+
+This is a layout question, not a bridge one - what should happen is that a
+passage arriving where the room already opens is *not* a secret entrance at
+all, it simply met the room at its own exit, and both the log and the mark
+should say that instead. Left alone because it changes what the generator
+narrates, not just what is drawn.
+`test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
+this case, and says so.
 
 ## 5. Rooms that find nowhere to go are 9.9%
 
@@ -174,6 +199,8 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - a secret entrance opened by an arriving passage sits on that room's wall,
   and is marked "S" there - it is not a door and does not come off the door
   table, so nothing else on the map would say it is secret
+- and it does not breach that wall in dungeongen: an `Exit` there draws an
+  archway announcing the way out, over the very wall it is meant to hide in
 - two rooms joined by nothing but a door keep the wall between them (an
   *open* door in dungeongen merges their regions and erases it)
 - a passage rolled with no length of its own says in the log that it still

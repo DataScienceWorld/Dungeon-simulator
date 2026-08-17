@@ -601,6 +601,17 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         from_info = room_bounds.get(room_exit["room_id"])
         if from_info is None:
             continue
+        if room_exit.get("secret"):
+            # Not for a secret one. dungeongen's Exit is not a neutral wall
+            # breach: its own docstring calls it "a skewed inverted U archway
+            # extending away from the dungeon" - the way *out*, drawn in
+            # perspective, sticking out of the wall. On a hidden way in that
+            # is the opposite of the truth, and it breaks the same rule a
+            # secret door already follows here: the wall it hides in has to
+            # survive. So nothing is handed over, the wall stays solid, and
+            # the overlay's "S" is the only thing that marks it - which is
+            # what a secret entrance is supposed to look like.
+            continue
         dungeon.add_exit(_DGExit(
             x=_grid(room_exit["x"]), y=_grid(room_exit["y"]),
             direction=_COMPASS_TO_DG_DIRECTION.get(room_exit["direction"], "north"),

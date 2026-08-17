@@ -618,3 +618,70 @@ def test_a_secret_entrance_is_marked_by_the_overlay_too():
                     )
                     found += 1
     assert found > 20, f"expected plenty of secret entrances, found {found}"
+
+
+def test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen():
+    """The "S" has to be the *only* thing marking it, which means the wall
+    behind it must still be there.
+
+    An ordinary room exit goes over as a dungeongen `Exit`, which is the one
+    thing in its model that opens a wall without needing a room on the far
+    side. But an `Exit` is not a neutral breach - its own docstring calls it
+    "a skewed inverted U archway extending away from the dungeon", and it
+    draws exactly that: a perspective archway sticking out of the wall,
+    announcing the way out. On a hidden way in that is the opposite of the
+    truth, and it breaks the rule a secret *door* already follows here - the
+    wall it hides in has to survive.
+
+    So a secret entrance is handed over as nothing at all. The corridor still
+    runs up to the wall (and gets its full length back, since a passage yields
+    the cell an exit would have claimed), the wall stays solid, and the
+    overlay draws the "S" on it."""
+    checked = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                secret = [e for e in island.get("room_exits", []) if e.get("secret")]
+                if not secret:
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                # Keyed by room as well as cell, not cell alone: two rooms can
+                # share a wall point, so one room's perfectly ordinary opening
+                # can sit on the very cell another room's secret entrance does
+                # (seed 0: room 53's west and north exits land on room 51's).
+                number_of = {rid: room.number for rid, room in built.rooms.items()}
+                breached = {
+                    (number_of.get(e.room_id), e.x, e.y) for e in built.exits.values()
+                }
+                plain_cells = {
+                    (e["room_id"], bridge._grid(e["x"]), bridge._grid(e["y"]))
+                    for e in island["room_exits"] if not e.get("secret")
+                }
+                for entrance in secret:
+                    cell = (entrance["room_id"],
+                            bridge._grid(entrance["x"]), bridge._grid(entrance["y"]))
+                    if cell in plain_cells:
+                        # The room already declares an ordinary opening on this
+                        # exact spot, so the breach here is that one's doing and
+                        # is legitimate. That a break-in was *also* recorded on a
+                        # hole the room already has is its own problem - it is
+                        # not secret if you can see it - and it is a layout
+                        # question, not a bridge one. 7 of 72 over 60 seeds; see
+                        # TODO.md.
+                        continue
+                    assert cell not in breached, (
+                        f"seed {seed}: room #{entrance['room_id']}'s secret entrance is "
+                        f"handed to dungeongen as an Exit, which draws an archway through "
+                        f"the wall it is supposed to be hidden in"
+                    )
+                    checked += 1
+                # And the ordinary ones still are - this must not have turned
+                # into "no room exit ever reaches dungeongen".
+                plain = [e for e in island["room_exits"] if not e.get("secret")]
+                if plain:
+                    assert breached, (
+                        f"seed {seed}: no room exit reached dungeongen at all, so the "
+                        f"walls of {len(plain)} ordinary openings are drawn solid"
+                    )
+    assert checked > 20, f"expected plenty of secret entrances, found {checked}"
