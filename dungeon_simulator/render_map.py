@@ -342,6 +342,30 @@ def _namespace_svg_ids(svg_inner: str, suffix: str) -> str:
     return svg_inner
 
 
+def _secret_mark(mx: float, my: float, ddx: float, ddy: float, scale: float, title: str) -> str:
+    """The mark that says "secret" on a dungeongen-drawn map.
+
+    dungeongen cannot say it itself on the path we render through: its adapter
+    folds a secret door into an *open* one, which erases the very wall the
+    thing is hidden in. So the wall is kept (the door goes over closed, the
+    entrance as a plain breach) and this is drawn on top - a dashed bar across
+    the opening and an "S", which is dungeongen's own convention for one."""
+    length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
+    perp_x, perp_y = -ddy / length, ddx / length
+    half = max(scale * 0.4, 10.0)
+    return (
+        f'<line x1="{mx - perp_x * half}" y1="{my - perp_y * half}" '
+        f'x2="{mx + perp_x * half}" y2="{my + perp_y * half}" '
+        f'stroke="{_DG_INK}" stroke-width="5" stroke-dasharray="5 4" />'
+        f'<circle cx="{mx}" cy="{my}" r="11" fill="#fff" stroke="{_DG_INK}" stroke-width="3" />'
+        f'<text x="{mx}" y="{my + 6}" text-anchor="middle" '
+        f'font-family="ui-monospace, Menlo, monospace" font-size="15" font-weight="700" '
+        f'fill="{_DG_INK}">S</text>'
+        f'<rect x="{mx - 14}" y="{my - 14}" width="28" height="28" class="dg-map-hit">'
+        f"<title>{_html.escape(title)}</title></rect>"
+    )
+
+
 def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: float, scale: float) -> str:
     """Interactive layer dungeongen has no concept of: room tooltips/numbers
     (its own numbering is disabled so ours - matching the room key - is the
@@ -490,30 +514,41 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     # so it draws every corridor on the map with real walls; inking a line on
     # top of that would only cover its floor with a black bar.
 
+    # A way into a room that nobody planned - a passage that ran into it and
+    # opened there (see layout.py). dungeongen is told about it as a plain
+    # breach in the wall, which is right for the art but says nothing about
+    # what it is, so the mark goes on here. Same mark as a secret door,
+    # because from the map's side that is what it is.
+    for room_exit in island.get("room_exits", []):
+        if not room_exit.get("secret"):
+            continue
+        ex, ey = room_exit["x"], room_exit["y"]
+        wall = room_exit["direction"]
+        # The opening spans one cell of the wall, so its middle is half a cell
+        # along it; which axis that is depends on which wall was broken into.
+        if wall in ("W", "E"):
+            sx, sy = px(ex, ey + 0.5)
+            edx, edy = (-1, 0) if wall == "W" else (1, 0)
+        else:
+            sx, sy = px(ex + 0.5, ey)
+            edx, edy = (0, -1) if wall == "N" else (0, 1)
+        parts.append(_secret_mark(
+            sx, sy, edx, edy, scale,
+            f"Ingresso segreto nella stanza #{room_exit['room_id']}: "
+            f"un passaggio e' arrivato fin qui e vi si e' aperto un varco."
+        ))
+
     for door in island["doors"]:
         (mx_raw, my_raw), (ddx, ddy) = _door_marker_geometry(door)
         mx, my = px(mx_raw, my_raw)
-        title = _html.escape(_full_text(door["lines"]))
+        raw_title = _full_text(door["lines"])
+        title = _html.escape(raw_title)
         if door.get("secret"):
-            # dungeongen cannot say "secret" on the path we render through -
-            # its adapter turns a secret door into an *open* one, which erases
-            # the very wall the door is hidden in. It goes over as a closed
-            # door so the wall survives, and the mark that makes it secret is
-            # drawn here: its own convention is a dashed line marked "S".
-            length = (ddx ** 2 + ddy ** 2) ** 0.5 or 1.0
-            perp_x, perp_y = -ddy / length, ddx / length
-            half = max(scale * 0.4, 10.0)
-            parts.append(
-                f'<line x1="{mx - perp_x * half}" y1="{my - perp_y * half}" '
-                f'x2="{mx + perp_x * half}" y2="{my + perp_y * half}" '
-                f'stroke="{_DG_INK}" stroke-width="5" stroke-dasharray="5 4" />'
-                f'<circle cx="{mx}" cy="{my}" r="11" fill="#fff" stroke="{_DG_INK}" stroke-width="3" />'
-                f'<text x="{mx}" y="{my + 6}" text-anchor="middle" '
-                f'font-family="ui-monospace, Menlo, monospace" font-size="15" font-weight="700" '
-                f'fill="{_DG_INK}">S</text>'
-                f'<rect x="{mx - 14}" y="{my - 14}" width="28" height="28" class="dg-map-hit">'
-                f"<title>Porta segreta. {title}</title></rect>"
-            )
+            # Raw, not `title`: _secret_mark escapes its own tooltip, so the
+            # already-escaped one would come out doubly escaped. Nothing the
+            # door table says needs escaping today, which is why this never
+            # showed - it would the moment one line grew an apostrophe.
+            parts.append(_secret_mark(mx, my, ddx, ddy, scale, f"Porta segreta. {raw_title}"))
             continue
         if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door):
             # dungeongen drew a proper door glyph here, so drawing a rust bar

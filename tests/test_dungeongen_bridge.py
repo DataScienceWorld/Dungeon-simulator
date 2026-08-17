@@ -567,3 +567,54 @@ def test_a_secret_door_is_marked_by_the_overlay():
                 assert ">S</text>" in overlay
                 found += len(secret)
     assert found, "expected at least one secret door across the sweep"
+
+
+def test_a_secret_entrance_is_marked_by_the_overlay_too():
+    """There are two different secret ways in, and only one of them is a door.
+
+    A secret *door* comes off the door table and lives in `island["doors"]`.
+    A secret *entrance* is the other case entirely: a passage runs into a room
+    that is already drawn, stops at its wall and opens a way in nobody rolled
+    for. It lives in `island["room_exits"]` with `secret` set, and the bridge
+    hands it to dungeongen as a plain breach in the wall - which draws exactly
+    like every ordinary exit. Seed 72's passage 15, which breaks into room 14
+    from the south, is one of ten on that level alone: the log said "ingresso
+    segreto" and the map showed a doorway.
+
+    So the overlay has to mark these as well, and the tooltip has to name the
+    room that was broken into - that is the only place the map says where the
+    passage actually ended up."""
+    from dungeon_simulator.render_map import _dungeongen_overlay_for_island
+
+    scale = 64.0
+    found = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                secret = [e for e in island.get("room_exits", []) if e.get("secret")]
+                if not secret:
+                    continue
+                overlay = _dungeongen_overlay_for_island(island, 0.0, 0.0, scale)
+                for entrance in secret:
+                    tip = f"Ingresso segreto nella stanza #{entrance['room_id']}"
+                    assert tip in overlay, (
+                        f"seed {seed}: the passage that broke into room "
+                        f"#{entrance['room_id']} is drawn as an ordinary doorway"
+                    )
+                    # And on the wall it broke through, not merely somewhere on
+                    # the page: the hit rect is centred on the mark, so its own
+                    # coordinates say where the "S" landed.
+                    wall = entrance["direction"]
+                    if wall in ("W", "E"):
+                        cx, cy = entrance["x"], entrance["y"] + 0.5
+                    else:
+                        cx, cy = entrance["x"] + 0.5, entrance["y"]
+                    want = (cx * scale - 14, cy * scale - 14)
+                    stamp = f'<rect x="{want[0]}" y="{want[1]}" width="28" height="28"'
+                    assert stamp in overlay, (
+                        f"seed {seed}: room #{entrance['room_id']}'s secret entrance is "
+                        f"marked, but not on the {wall} wall it was opened in"
+                    )
+                    found += 1
+    assert found > 20, f"expected plenty of secret entrances, found {found}"

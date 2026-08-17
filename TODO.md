@@ -84,7 +84,11 @@ Draw order decides which case applies:
 - a **passage arriving at a room already drawn** → **done**: it stops at that
   wall and is recorded as a secret entrance to the room, with the log saying
   which room it broke into; everything past that point of the branch is not
-  drawn.
+  drawn. It is marked on the map too: the bridge hands it to dungeongen as a
+  plain breach in the wall, which draws like any ordinary exit, so the overlay
+  puts the same "S" on it that a secret door gets. Seed 72 has ten of them
+  against two secret doors, which is why marking only the doors was not
+  enough - passage 15's break-in to room 14 read as a normal doorway.
 - a **passage crossing another passage** → still only handled at a branch's
   own *takeoff*, not where one runs into another at its far end.
 
@@ -167,7 +171,9 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - every corridor the layout drew reaches dungeongen (or is already covered,
   cell for cell, by something that did)
 - every link starts on its from-room's wall and ends on its to-room's
-- a secret entrance opened by an arriving passage sits on that room's wall
+- a secret entrance opened by an arriving passage sits on that room's wall,
+  and is marked "S" there - it is not a door and does not come off the door
+  table, so nothing else on the map would say it is secret
 - two rooms joined by nothing but a door keep the wall between them (an
   *open* door in dungeongen merges their regions and erases it)
 - a passage rolled with no length of its own says in the log that it still
