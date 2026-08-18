@@ -486,3 +486,88 @@ def test_a_passage_with_no_length_of_its_own_says_so():
             assert cells, f"seed {seed}: passage #{node.id} claims the minimum but is not drawn"
             noted += 1
     assert noted > 20, f"expected plenty of these, found {noted}"
+
+
+def test_stairs_stand_on_a_corridor_cell_of_their_own():
+    """The steps need a floor under them.
+
+    A stairs node used to walk its length and record only the lattice point it
+    reached - no corridor, no cell. 84% of them therefore sat on bare rock,
+    and the map showed a marker floating in the middle of nowhere. It also
+    made dungeongen's own staircase unusable: its adapter hangs a StairsProp
+    off whichever passage contains the cell, and silently dumps it on
+    `passages[0]` when it finds none, so the steps would have appeared
+    somewhere unrelated.
+
+    Two separate things are asserted because they were separately wrong. The
+    corridor has to exist, and the cell recorded for the steps has to be one
+    the corridor actually covers - the walk's end *point* is one cell past its
+    last cell whenever it ran in the positive direction, which is what left a
+    third of them still pointing at empty ground after the corridor was
+    added."""
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    checked = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                covered = set()
+                for corridor in island["corridors"]:
+                    covered |= bridge._path_cells(bridge._pad_single_cell(
+                        bridge._grid_cell_path(corridor["points"])))
+                for stair in island["stairs"]:
+                    own = [c for c in island["corridors"]
+                           if c["id"] == f"stairs{stair['id']}"]
+                    assert own, (
+                        f"seed {seed}: stairs #{stair['id']} have no corridor of "
+                        f"their own, so the steps are drawn on bare rock"
+                    )
+                    cell = (stair["cell_x"], stair["cell_y"])
+                    assert cell in covered, (
+                        f"seed {seed}: stairs #{stair['id']} are recorded at cell "
+                        f"{cell}, which no corridor covers"
+                    )
+                    assert cell in bridge._path_cells(bridge._pad_single_cell(
+                        bridge._grid_cell_path(own[0]["points"]))), (
+                        f"seed {seed}: stairs #{stair['id']} do not stand on their "
+                        f"own corridor"
+                    )
+                    checked += 1
+    assert checked > 50, f"expected plenty of stairs, found {checked}"
+
+
+def test_stairs_say_where_they_come_out():
+    """The marker's whole job is telling you where the steps lead, so it
+    carries the destination node - the room or passage you arrive in - and not
+    just the level. A stairs node has exactly one child, which is that
+    destination; the only case with none is a branch the generator cut, and
+    the note falls back to the level alone there rather than inventing one."""
+    checked = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        by_id = {}
+        stack = [dungeon.root]
+        while stack:
+            node = stack.pop()
+            by_id[node.id] = node
+            stack.extend(node.children)
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                for stair in island["stairs"]:
+                    node = by_id[stair["id"]]
+                    if not node.children:
+                        assert stair["to_id"] is None
+                        continue
+                    assert stair["to_id"] == node.children[0].id
+                    # Whatever kind the child is, not a list of kinds I
+                    # guessed: stairs can also come out at the map edge, which
+                    # the first version of this test did not allow for.
+                    assert stair["to_kind"] == node.children[0].kind
+                    assert stair["to_level"] == node.children[0].level, (
+                        f"seed {seed}: stairs #{stair['id']} say level "
+                        f"{stair['to_level']} but their destination is on "
+                        f"{node.children[0].level}"
+                    )
+                    checked += 1
+    assert checked > 50, f"expected plenty of stairs, found {checked}"

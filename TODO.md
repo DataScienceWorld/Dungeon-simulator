@@ -140,9 +140,35 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
-## 5. Rooms that find nowhere to go are 9.9%
+## 4c. Stairs: 23 of 185 are still walled off from their own trunk
 
-70 of 708 (60 seeds x 2 depths), down from 19.4%. Each says so in its own log
+The steps now have a floor - a stairs node emits a corridor for the length it
+walks, so its 10ft cell exists and dungeongen's own `StairsProp` (a 1x1 cell
+of drawn steps) can be hung off it. Before that they sat on nothing: 84% of
+stairs were on no corridor and no room at all, and the adapter's
+`_convert_stair` would have dumped the prop on `passages[0]` - silently, on an
+unrelated corridor somewhere else on the level.
+
+Reachability came with it, via the same takeoff-cell trick a branch uses:
+stairs in the same connected region as the corridor they leave from went
+**2% -> 76%** (4 -> 140 of 185), walled-off 164 -> 23.
+
+What is left splits into two, neither of them the same bug:
+
+- the stairs *are* the entrance (parent node is `start`), so there is no
+  corridor behind them to join. Correct as drawn.
+- the stairs sit behind a **door**, which by design takes no cell of its own,
+  so the cell behind them carries no route to claim. This is the real one, and
+  it is the door-connection problem from item 2 seen from the other side.
+
+27 stairs have a takeoff cell no other route occupies, which is the union of
+those two cases.
+
+## 5. Rooms that find nowhere to go are 10.2%
+
+72 of 708 (60 seeds x 2 depths), down from 19.4%. It was 9.9% before the
+stairs got a corridor of their own - two more rooms now lose their ground
+to one, which is the same competition item 4 describes. Each says so in its own log
 entry, which is the invariant that matters.
 
 The budget they used to waste is recovered: after each breadth-first wave the
@@ -208,13 +234,17 @@ recent work bought, and they are cheap to verify (60 seeds x 2 depths):
 - nothing is generated past a point the map cannot reach - an unplaceable
   room, a passage that runs into one, an exit with no room on its wall - and
   the node where it stops says so
+- every stairs node stands on a corridor cell of its own, and the cell
+  recorded for it is one that corridor covers (the walk's end *point* is
+  one cell past its last cell whenever it ran forwards)
+- a stairs marker names the room or passage it comes out in, and the level
 - a secret door goes to dungeongen *closed*, never secret: its adapter turns
   a secret door into an open one, which erases the wall it hides in
 - no dungeongen hangs *or segfaults* across the seed sweep
 
 Measured at the state this list was last rewritten, 60 seeds x 2 depths:
-708 rooms, 70 of them unplaceable (9.9%), 29298 coordinates, 4848 segments,
-919 room pairs, 1367 exits, 171 links - all clean. Corridor cells inside a
+708 rooms, 72 of them unplaceable (10.2%), 30748 coordinates, 5190 segments,
+861 room pairs, 1371 exits - all clean. Corridor cells inside a
 room's floor: 1.72%. Nodes behind something the map never reaches: 0%. Hang
 sweep: 1784 islands, 0 hangs, 6 size refusals. Levels drawn by dungeongen:
 120 of 120 (100%).

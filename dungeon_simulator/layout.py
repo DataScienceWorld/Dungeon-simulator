@@ -487,9 +487,47 @@ class _Layout:
             length = _cells(node.geo.get("length_ft", 10))
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
+            # The steps need a floor to be drawn on. A stairs node used to
+            # walk its length and record only the point it reached, so the
+            # icon ended up floating on bare rock - 84% of them sat on no
+            # corridor and no room at all - and dungeongen, which hangs its
+            # stairs prop off the passage containing the cell, had nothing to
+            # hang it on. The walk is a corridor like any other, so it is
+            # emitted like one, and the steps get their own 10ft square.
+            island["corridors"].append({
+                "id": f"stairs{node.id}", "points": [(x, y), (nx, ny)],
+                "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "lines": [],
+            })
+            island["_route_cells"] |= _segment_cells((x, y), (nx, ny))
+            # The cell this stub leaves from, so the bridge can extend it back
+            # onto its trunk. Without it dungeongen sees a one-cell passage
+            # that merely touches the flank of another and walls it off - the
+            # steps end up in a sealed box you cannot walk into. Same formula
+            # as any other branch's takeoff: travelling forwards the trunk's
+            # last cell is behind the lattice point, travelling backwards it
+            # is the point's own cell.
+            island["_takeoff"][f"stairs{node.id}"] = (
+                int(x - (1 if dx > 0 else 0)), int(y - (1 if dy > 0 else 0))
+            )
+            # Where the steps go is the whole point of the marker, so the
+            # destination travels with them: its node is the room or passage
+            # you come out in, which is what the map's note names.
+            destination = node.children[0] if node.children else None
+            # The cell the steps are drawn in, not the lattice point the walk
+            # stopped at - those differ by one whenever the walk ran in the
+            # positive direction, which is what left a third of them pointing
+            # at the empty square past the end of their own corridor.
+            # _segment_cells' convention: the cell is the square *after* the
+            # line, so travelling forwards the last one is (end - 1).
+            cx = (nx - 1 if nx > x else nx) if dx else int(x)
+            cy = (ny - 1 if ny > y else ny) if dy else int(y)
             island["stairs"].append({
                 "id": node.id, "x": nx, "y": ny,
+                "cell_x": int(cx), "cell_y": int(cy),
                 "delta": node.geo.get("level_delta", 0), "to_level": node.geo.get("to_level"),
+                "to_id": destination.id if destination is not None else None,
+                "to_kind": destination.kind if destination is not None else None,
+                "heading": heading,
                 "lines": node.lines,
             })
             for child in node.children:
@@ -1019,6 +1057,13 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
         for item in island[group]:
             item["x"] += shift_x
             item["y"] += shift_y
+            # The stairs also carry the cell they are drawn in, which is a
+            # separate coordinate and has to move with everything else - the
+            # takeoff cell was translated late for exactly this reason once
+            # already, and read as pre-translation coordinates until it was.
+            if "cell_x" in item:
+                item["cell_x"] += int(shift_x)
+                item["cell_y"] += int(shift_y)
     for link in island["links"]:
         link["points"] = [(cx + shift_x, cy + shift_y) for cx, cy in link["points"]]
     # The cell bookkeeping moves with everything else. It used to be left

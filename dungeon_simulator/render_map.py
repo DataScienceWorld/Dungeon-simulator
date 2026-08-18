@@ -217,7 +217,7 @@ _RENDER_SCRIPT_JS = """
       var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', s.lx); text.setAttribute('y', s.ly);
       text.setAttribute('class', 'dg-map-label');
-      text.textContent = 'L' + s.toLevel;
+      text.textContent = s.note;
       svg.appendChild(text);
     });
     data.portals.forEach(function (p) {
@@ -425,16 +425,30 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         if hue:
             parts.append(f'<circle cx="{rx + 16}" cy="{ry + 16}" r="9" fill="{hue}" stroke="#fff" stroke-width="2" />')
 
+    # No icon of our own any more: dungeongen draws real steps here, filling
+    # the stairs' own 10ft cell (StairsProp, a 1x1 grid-aligned prop). What it
+    # cannot say is where they come out, so that is all this adds - a note
+    # above the square naming the room or passage you arrive in and the level
+    # it is on - plus the hit area that carries the roll's own text.
     for stair in island["stairs"]:
-        sx, sy = px_cell(stair["x"], stair["y"])
-        up = stair["delta"] < 0
-        pts = (f"{sx},{sy - 16} {sx - 13},{sy + 12} {sx + 13},{sy + 12}" if up
-               else f"{sx},{sy + 16} {sx - 13},{sy - 12} {sx + 13},{sy - 12}")
+        cell_x, cell_y = stair.get("cell_x"), stair.get("cell_y")
+        if cell_x is None:
+            cell_x, cell_y = _bridge._grid_cell_path(
+                [(stair["x"], stair["y"])] * 2)[0]
+        sx, sy = px(cell_x + 0.5, cell_y + 0.5)
         title = _html.escape(_full_text(stair["lines"]))
+        level = stair.get("to_level")
+        # A destination that was never generated (its branch was cut) leaves
+        # the level on its own rather than an invented number.
+        note = (f"{stair['to_id']} L{level}" if stair.get("to_id") is not None
+                else f"L{level}")
+        half = max(scale * 0.5, 16.0)
         parts.append(
-            f'<polygon points="{pts}" fill="{_DG_FIXED_HUES["plum"]}" stroke="#fff" stroke-width="2">'
-            f"<title>{title}</title></polygon>"
-            f'<text x="{sx + 19}" y="{sy + 6}" class="dg-map-label-dg">L{stair.get("to_level")}</text>'
+            f'<text x="{sx}" y="{sy - half - 6}" text-anchor="middle" '
+            f'class="dg-map-label-dg" paint-order="stroke" stroke="#fff" '
+            f'stroke-width="4">({note})</text>'
+            f'<rect x="{sx - half}" y="{sy - half}" width="{half * 2}" '
+            f'height="{half * 2}" class="dg-map-hit"><title>{title}</title></rect>'
         )
 
     for portal in island["portals"]:
@@ -737,9 +751,13 @@ def _level_payload(level: int, islands: list[dict]) -> dict:
             up = stair["delta"] < 0
             points = [[sx, sy - 7], [sx - 6, sy + 5], [sx + 6, sy + 5]] if up else \
                      [[sx, sy + 7], [sx - 6, sy - 5], [sx + 6, sy - 5]]
+            # Same note as the dungeongen map: where the steps come out.
+            level = stair.get("to_level")
+            note = (f"({stair['to_id']} L{level})" if stair.get("to_id") is not None
+                    else f"(L{level})")
             stairs.append({
                 "id": stair["id"], "points": points, "lx": sx + 9, "ly": sy + 4,
-                "toLevel": stair.get("to_level"), "title": _full_text(stair["lines"]),
+                "note": note, "title": _full_text(stair["lines"]),
             })
 
         for portal in island["portals"]:
@@ -872,7 +890,7 @@ def render_map_section(dungeon) -> str:
         '<span class="dg-map-legend-title">Simboli</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["corridor"]}Corridoio</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["door"]}Porta</span>'
-        f'<span class="dg-swatch">{_LEGEND_ICONS["stairs"]}Scale (▲ su / ▼ giù, con livello di arrivo)</span>'
+        f'<span class="dg-swatch">{_LEGEND_ICONS["stairs"]}Scale - la nota (stanza Llivello) dice in quale stanza/passaggio e a che livello si sbuca</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["portal"]}Portale magico</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["cap"]}Vicolo cieco / limite mappa (il numero è l\'id nel registro, per capire perché)</span>'
         f'<span class="dg-swatch">{_LEGEND_ICONS["entrance"]}Ingresso del dungeon</span>'

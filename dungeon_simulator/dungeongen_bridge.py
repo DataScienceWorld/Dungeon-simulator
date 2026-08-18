@@ -59,6 +59,8 @@ try:
         DoorType as _DGDoorType,
         Exit as _DGExit,
         ExitType as _DGExitType,
+        Stair as _DGStair,
+        StairDirection as _DGStairDirection,
         Passage as _DGPassage,
         Room as _DGRoom,
         RoomShape as _DGRoomShape,
@@ -677,6 +679,29 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             waypoints=waypoints, width=1,
         )):
             drawn_cells |= cells
+
+    # The steps themselves. dungeongen has a real staircase prop - a 1x1 cell
+    # of drawn steps - and its adapter hangs one off whichever passage
+    # contains that cell, so the corridor the layout now puts under every
+    # stairs node is what makes this possible at all. Without one the adapter
+    # silently falls back to `passages[0]` and the steps appear somewhere
+    # unrelated, so a stair whose cell nothing covers is skipped and left to
+    # the overlay.
+    for stair in island.get("stairs", []):
+        cell = (stair.get("cell_x"), stair.get("cell_y"))
+        if cell[0] is None or cell not in drawn_cells:
+            continue
+        # Which way the steps face: the prop is oriented by the direction they
+        # *ascend*. Going down, that is back the way you came.
+        heading = stair.get("heading")
+        if stair.get("delta", 0) >= 0:
+            heading = {"N": "S", "S": "N", "E": "W", "W": "E"}.get(heading, heading)
+        dungeon.add_stair(_DGStair(
+            x=cell[0], y=cell[1],
+            direction=_COMPASS_TO_DG_DIRECTION.get(heading, "north"),
+            stair_dir=(_DGStairDirection.UP if stair.get("delta", 0) < 0
+                       else _DGStairDirection.DOWN),
+        ))
 
     return dungeon
 

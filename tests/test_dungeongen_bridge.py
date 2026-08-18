@@ -685,3 +685,43 @@ def test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen():
                         f"walls of {len(plain)} ordinary openings are drawn solid"
                     )
     assert checked > 20, f"expected plenty of secret entrances, found {checked}"
+
+
+def test_stairs_reach_dungeongen_and_land_in_a_real_passage():
+    """dungeongen draws proper steps - a 1x1 cell of them - and that is what
+    the map should show instead of an overlay triangle.
+
+    The catch is in its adapter: `_convert_stair` looks for the passage
+    containing the stair's cell, and when it finds none it does not raise or
+    skip, it appends the prop to `passages[0]`. So a stair whose cell nothing
+    covers does not vanish - it silently turns up on an unrelated corridor
+    somewhere else on the level. The assertion is therefore not "the stair was
+    handed over" but "the cell it was handed over at is inside a passage
+    dungeongen actually built"."""
+    from dungeongen.constants import CELL_SIZE
+
+    handed = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                assert len(built.stairs) == len(island["stairs"]), (
+                    f"seed {seed}: {len(island['stairs'])} stairs in the layout but "
+                    f"{len(built.stairs)} reached dungeongen"
+                )
+                dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                for stair in built.stairs.values():
+                    mx = (stair.x + off_x) * CELL_SIZE + CELL_SIZE / 2
+                    my = (stair.y + off_y) * CELL_SIZE + CELL_SIZE / 2
+                    assert any(p.shape.contains(mx, my) for p in dg_map.passages), (
+                        f"seed {seed}: no passage covers the stairs at "
+                        f"({stair.x}, {stair.y}), so dungeongen will drop the steps "
+                        f"onto passages[0] somewhere else entirely"
+                    )
+                    handed += 1
+    assert handed > 50, f"expected plenty of stairs, found {handed}"
