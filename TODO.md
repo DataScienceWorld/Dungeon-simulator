@@ -140,7 +140,51 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
-## 4c. Stairs: 23 of 185 are still walled off from their own trunk
+## 4c. The stairs alcove is cramped
+
+The steps are drawn in a one-cell **room** of their own rather than a passage,
+which is what gives them walls. dungeongen draws a wall only along the outline
+of a region, so two touching floor cells inside one region have nothing to draw
+between them: as a passage, a stairs cell running alongside another corridor
+(32% of them - 60 of 185 over 40 seeds) simply had no wall on that flank. Seed
+72's stairs 23 measured **6.9%** ink on its north edge where a real wall
+measures ~100%; as an alcove it measures **86.6%**.
+
+The way in is an `Exit`, not a Door. Both are the only things that open a wall
+(the two `get_side_shape` providers), but an Exit is *terminal* in
+`_trace_connected_region` - it contributes its floor chip without merging the
+two regions - so the alcove keeps its other three walls. A Door would also
+have been a door nobody rolled. Its archway is suppressed
+(`_quieten_stair_alcoves`), which is safe because that archway is all
+`Exit.draw` does and only on `Layers.OVERLAY`, while the chip comes from
+`get_side_shape`.
+
+**The open item is that it looks tight.** At one cell, dungeongen's own room
+wall plus the exit chip's notches leave very little room, and the steps read
+worse than they did as a plain passage. The alternative not taken: shift the
+stairs a cell along their trunk when the natural cell flanks another route, so
+the wall comes from ordinary geometry and the steps keep a clean cell. That
+keeps everything native and is probably the better answer.
+
+Three things this needed on top, each a real failure first:
+
+- an alcove whose cell falls inside a room is not created at all - it would be
+  a room drawn inside a room, which is also two overlapping rooms handed to
+  dungeongen.
+- two stairs can be walked onto the same cell; the second gets no alcove (the
+  stair itself is still handed over).
+- `_convert_stair` looks for a passage before a room and falls back to
+  `passages[0]`, so with stairs no longer being passages the staircase could
+  land on an unrelated corridor or, on an island with no passages left, be
+  dropped outright. `_quieten_stair_alcoves` puts it back, or rebuilds it.
+  Alcoves without their steps: 0 of 116.
+
+Identifying an alcove by size ("the only room one cell across") was wrong -
+real rooms come out 1x1 too, and they were having their decoration stripped
+and their exits silenced. It is done by position now, against the stair cells
+the dungeon was built from.
+
+## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 
 The steps now have a floor - a stairs node emits a corridor for the length it
 walks, so its 10ft cell exists and dungeongen's own `StairsProp` (a 1x1 cell
@@ -149,9 +193,11 @@ stairs were on no corridor and no room at all, and the adapter's
 `_convert_stair` would have dumped the prop on `passages[0]` - silently, on an
 unrelated corridor somewhere else on the level.
 
-Reachability came with it, via the same takeoff-cell trick a branch uses:
-stairs in the same connected region as the corridor they leave from went
-**2% -> 76%** (4 -> 140 of 185), walled-off 164 -> 23.
+Measured while the stairs were still a passage: in the same connected
+region as the corridor they leave from, **2% -> 76%** (4 -> 140 of 185).
+That number does not carry over - an alcove is deliberately its own
+region now, reached through an Exit's chip - so the connectivity question
+needs asking again in the new model before anything is claimed about it.
 
 What is left splits into two, neither of them the same bug:
 
