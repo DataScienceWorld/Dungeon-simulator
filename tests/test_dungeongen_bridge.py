@@ -102,11 +102,7 @@ def test_build_dungeongen_dungeon_matches_room_and_link_counts():
     assert islands is not None, "expected at least one populated level for seed 1"
     island = islands[0]
     dg = bridge.build_dungeongen_dungeon(island)
-    # Excluding the stairs alcoves, which are rooms dungeongen is told
-    # about but our layout does not count as rooms - they are the single
-    # cell a staircase is drawn in.
-    real_rooms = [r for r in dg.rooms if not r.startswith("stair")]
-    assert len(real_rooms) == len(island["rooms"])
+    assert len(dg.rooms) == len(island["rooms"])
     # every link with both ends resolved to a real room becomes exactly one
     # passage. Counted over room-to-room passages only: dead-end branches are
     # handed to dungeongen as passages too, with a synthetic far end that is
@@ -398,28 +394,7 @@ def test_every_corridor_the_layout_drew_reaches_dungeongen():
             for island in islands:
                 if not island["rooms"] or not bridge.fits_size_limit(island):
                     continue
-                built = bridge.build_dungeongen_dungeon(island)
-                drawn = _passage_cells(built)
-                # A stairs corridor reaches dungeongen as the one-cell
-                # room its steps are drawn in, not as a passage - that
-                # is what gives the alcove walls of its own. Still
-                # drawn, so still counted.
-                drawn |= {
-                    (x, y)
-                    for rid, room in built.rooms.items() if rid.startswith("stair")
-                    for x in range(room.x, room.x + room.width)
-                    for y in range(room.y, room.y + room.height)
-                }
-                # A stairs cell that fell inside a room keeps no alcove of its
-                # own - that would be a room drawn inside a room - so it is the
-                # room's floor that draws it. Still not rock, so still drawn,
-                # but only this case gets the allowance.
-                room_cells = {
-                    (x, y)
-                    for room in built.rooms.values()
-                    for x in range(room.x, room.x + room.width)
-                    for y in range(room.y, room.y + room.height)
-                }
+                drawn = _passage_cells(bridge.build_dungeongen_dungeon(island))
                 for corridor in island["corridors"]:
                     points = bridge._dedupe(corridor["points"])
                     if len(points) < 2:
@@ -427,8 +402,7 @@ def test_every_corridor_the_layout_drew_reaches_dungeongen():
                     want = bridge._path_cells(
                         bridge._pad_single_cell(bridge._grid_cell_path(points))
                     )
-                    allowed = drawn | room_cells if str(corridor["id"]).startswith("stairs") else drawn
-                    missing = want - allowed
+                    missing = want - drawn
                     assert not missing, (
                         f"seed {seed}: corridor {corridor['id']} covers {sorted(want)} "
                         f"but dungeongen was never told about {sorted(missing)}"
@@ -713,28 +687,20 @@ def test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen():
     assert checked > 20, f"expected plenty of secret entrances, found {checked}"
 
 
-def test_stairs_get_an_alcove_of_their_own_with_the_steps_in_it():
-    """The steps are drawn in a one-cell *room*, not a passage, and that is the
-    whole point of it.
+def test_stairs_reach_dungeongen_and_land_in_a_real_passage():
+    """dungeongen draws proper steps - a 1x1 cell of them - and that is what
+    the map should show instead of an overlay triangle.
 
-    dungeongen draws a wall only along the outline of a region, so two touching
-    floor cells inside one region have no wall between them. As a passage, a
-    stairs cell that ran alongside another corridor (32% of them do) simply had
-    no wall on that flank - measured on seed 72's stairs 23, whose north edge
-    carried 6.9% ink where a wall carries ~100%. A room of its own is its own
-    region, and an `Exit` - terminal in `_trace_connected_region`, unlike a
-    Door - opens the one side it is entered from without merging the two.
-
-    What is asserted is what can silently go wrong: the alcove exists, it is
-    exactly one cell, it has a way in, and the staircase is *in it*. That last
-    one is not a given - `_convert_stair` looks for a passage before a room and
-    falls back to `passages[0]`, so the steps can end up on an unrelated
-    corridor or, on an island with no passages left, be dropped entirely."""
+    The catch is in its adapter: `_convert_stair` looks for the passage
+    containing the stair's cell, and when it finds none it does not raise or
+    skip, it appends the prop to `passages[0]`. So a stair whose cell nothing
+    covers does not vanish - it silently turns up on an unrelated corridor
+    somewhere else on the level. The assertion is therefore not "the stair was
+    handed over" but "the cell it was handed over at is inside a passage
+    dungeongen actually built"."""
     from dungeongen.constants import CELL_SIZE
-    from dungeongen.map.props import StairsProp
-    from dungeongen.map.room import Room as _MapRoom
 
-    checked = 0
+    handed = 0
     for seed in range(20):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         for islands in compute_layout(dungeon).values():
@@ -746,38 +712,16 @@ def test_stairs_get_an_alcove_of_their_own_with_the_steps_in_it():
                     f"seed {seed}: {len(island['stairs'])} stairs in the layout but "
                     f"{len(built.stairs)} reached dungeongen"
                 )
-                alcoves = {
-                    (room.x, room.y): room
-                    for rid, room in built.rooms.items() if rid.startswith("stair")
-                }
-                for room in alcoves.values():
-                    assert (room.width, room.height) == (1, 1), (
-                        f"seed {seed}: a stairs alcove is {room.width}x{room.height}, "
-                        f"not the single cell the steps occupy"
-                    )
-                exits_at = {(e.x, e.y) for e in built.exits.values()}
-                for cell in alcoves:
-                    assert cell in exits_at, (
-                        f"seed {seed}: the alcove at {cell} has no Exit, so it is "
-                        f"walled on all four sides and cannot be entered"
-                    )
-
                 dg_map = bridge._convert_dungeon(built, show_numbers=False)
-                bridge._quieten_stair_alcoves(dg_map, built)
                 off_x = -built.bounds[0] if built.rooms else 0
                 off_y = -built.bounds[1] if built.rooms else 0
-                for cell in alcoves:
-                    want = (cell[0] + off_x, cell[1] + off_y)
-                    drawn = [
-                        el for el in dg_map._elements
-                        if isinstance(el, _MapRoom)
-                        and (round(el.shape.bounds.x / CELL_SIZE),
-                             round(el.shape.bounds.y / CELL_SIZE)) == want
-                    ]
-                    assert drawn, f"seed {seed}: the alcove at {cell} was not converted"
-                    assert any(isinstance(prop, StairsProp) for prop in drawn[0].props), (
-                        f"seed {seed}: the alcove at {cell} has no staircase in it - "
-                        f"the adapter hung it somewhere else, or dropped it"
+                for stair in built.stairs.values():
+                    mx = (stair.x + off_x) * CELL_SIZE + CELL_SIZE / 2
+                    my = (stair.y + off_y) * CELL_SIZE + CELL_SIZE / 2
+                    assert any(p.shape.contains(mx, my) for p in dg_map.passages), (
+                        f"seed {seed}: no passage covers the stairs at "
+                        f"({stair.x}, {stair.y}), so dungeongen will drop the steps "
+                        f"onto passages[0] somewhere else entirely"
                     )
-                    checked += 1
-    assert checked > 50, f"expected plenty of stairs, found {checked}"
+                    handed += 1
+    assert handed > 50, f"expected plenty of stairs, found {handed}"
