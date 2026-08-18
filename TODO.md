@@ -140,7 +140,7 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
-## 4c. Stairs: 23 of 185 are still walled off from their own trunk
+## 4c. Stairs sit flush against another corridor in 32% of cases
 
 The steps now have a floor - a stairs node emits a corridor for the length it
 walks, so its 10ft cell exists and dungeongen's own `StairsProp` (a 1x1 cell
@@ -163,6 +163,33 @@ What is left splits into two, neither of them the same bug:
 
 27 stairs have a takeoff cell no other route occupies, which is the union of
 those two cases.
+
+### The alcove attempt, and why it was reverted
+
+Tried and undone in `4526914` / `9946cc3`. The idea was sound and the
+mechanism is real: hand the stairs cell over as a one-cell **Room** instead of
+a Passage, so it is its own region and dungeongen draws it a full outline, and
+open one side with an **Exit** - which unlike a Door is *terminal* in
+`_trace_connected_region`, contributing its floor chip without merging the two
+regions. The north wall did appear: the cell's north edge went from 6.9% ink
+to 86.6% (a real wall measures ~100%).
+
+It was reverted because the alcove came out **sealed on all four sides**. A
+scan for the longest ink-free run along each edge found 0% on N, S, E and W -
+there was no way in at all. The Exit's floor chip does not cut the wall
+between two regions; what actually reads as an opening is the archway the Exit
+*draws*, and that archway had been suppressed precisely because it is the
+"way out" tunnel glyph that does not belong on a staircase.
+
+So the choice inside dungeongen is: archway and an opening, or no archway and
+no opening. There is no third chip provider - `get_side_shape` exists only on
+`Door` and `Exit`.
+
+Which leaves the layout fix as the one that can work: if the stairs cell does
+not touch a foreign route in the first place, dungeongen draws the wall itself,
+natively, and the cell stays legible. Shifting the stairs along their trunk to
+the first cell that flanks nothing (and only failing to place them when no such
+cell exists) is the shape of it.
 
 ## 5. Rooms that find nowhere to go are 10.2%
 
