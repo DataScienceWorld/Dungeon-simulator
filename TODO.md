@@ -209,8 +209,20 @@ way (N/S/W solid, E open at 15%). That separation only holds in this
 arrangement - a chip with no passage terminating at it opens nothing, glyph or
 no glyph, which is what the sealed version shipped.
 
+Its chip is not dungeongen's either, and for a separate reason. The chip is
+not decoration - it *is* the opening, the floor that bridges the wall - but
+dungeongen's is a rounded lobe a third of a cell across, drawn to sit
+half-hidden inside a room of ordinary size. In one cell there is nowhere for
+it to hide: it bulges into the middle of the floor and reads as a pear stuck
+to the doorway. Moving the door out to the boundary cell hides the lobe but
+**seals** the alcove, so the shape had to change, not the position. It is a
+plain rectangle straddling the wall now. Alcoves with exactly one side open,
+over 20 seeds: **13 -> 110**, none sealed; six open on more than one side,
+where the cell abuts something that reaches into it.
+
 Still open: at one cell the alcove reads tight, its own wall taking much of
-the space the steps have.
+the space the steps have - and the staircase's widest tread is drawn *on* the
+cell edge, which for these stairs is the edge the opening is in.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 
