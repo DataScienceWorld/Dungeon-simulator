@@ -283,6 +283,14 @@ door's centre, and on the alcove's cell that centre is half a cell inside the
 wall. Putting the door on the corridor cell instead - where dungeongen puts it
 for every ordinary room - has been measured three times and comes out sealed.
 
+**`_grid_cell_path` returns waypoints, not cells.** A corridor from (20,14)
+to (23,14) comes back as `[(20,14), (22,14)]` - the corners - and the cells
+between them are implied. Reading that list as "the cells this covers" misses
+(21,14) entirely, which is how the cell directly above seed 72's stairs #23
+got reported as bare rock twice when corridor 8 and the link from room 1 to
+room 28 both run through it. Expand the runs before asking what occupies a
+cell.
+
 **A warning about measuring any of this.** `_make_regions` inflates every
 shape by `REGION_INFLATE` (CELL_SIZE * 0.025) before drawing, so probing a
 region for "is this side open" says yes on all four sides of every alcove - 42
