@@ -812,6 +812,7 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
         return
     from dungeongen.map.room import Room as _MapRoom
     from dungeongen.map.door import Door as _MapDoor
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle, ShapeGroup as _ShapeGroup
     from dungeongen.map.props import StairsProp as _StairsProp
     from dungeongen.graphics.rotation import Rotation as _Rotation
     from dungeongen.constants import CELL_SIZE
@@ -878,12 +879,50 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     # on the same cell either way: north, south and west solid, east open at
     # 15%. That is only true in this arrangement; a chip with no passage
     # ending at it opens nothing at all, glyph or no glyph.
+    # Which wall each alcove opens through, taken from the door we made for
+    # it (it faces *into* the alcove, so the opening is the other way).
+    opening = {}
+    for door in dg_dungeon.doors.values():
+        cell = (door.x + off_x, door.y + off_y)
+        if cell in stair_at:
+            opening[cell] = {"north": "S", "south": "N",
+                             "east": "W", "west": "E"}.get(door.direction)
+
     for element in dg_map._elements:
         if not isinstance(element, _MapDoor):
             continue
         cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
-        if cell in alcoves:
-            element.draw = lambda *args, **kwargs: None
+        if cell not in alcoves:
+            continue
+        element.draw = lambda *args, **kwargs: None
+        side = opening.get(cell)
+        if side is None:
+            continue
+        # And a plain rectangular gap in place of dungeongen's own chip.
+        #
+        # The chip is not decoration - it *is* the opening, the piece of floor
+        # that bridges the wall - but its shape is a rounded lobe a third of a
+        # cell across, drawn to sit half-hidden inside a normal room. An alcove
+        # is one cell, so there is nowhere for it to hide: it bulges into the
+        # middle of the floor and reads as a pear stuck to the doorway. Moving
+        # the door out to the boundary cell hides the lobe but seals the alcove
+        # (measured: the wall comes out unbroken), so the shape has to change
+        # rather than the position. A rectangle straddling the wall is the
+        # plainest thing that still bridges it, and it leaves the cell square.
+        x0, y0 = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
+        depth, span = CELL_SIZE * 0.22, CELL_SIZE * 0.6
+        inset = (CELL_SIZE - span) / 2
+        if side in ("E", "W"):
+            gap = _Rectangle(
+                (x0 + CELL_SIZE - depth) if side == "E" else (x0 - depth),
+                y0 + inset, depth * 2, span)
+        else:
+            gap = _Rectangle(
+                x0 + inset,
+                (y0 + CELL_SIZE - depth) if side == "S" else (y0 - depth),
+                span, depth * 2)
+        chip = _ShapeGroup(includes=[gap], excludes=[])
+        element.get_side_shape = lambda connected, _chip=chip: _chip
 
 
 def island_extent_map_units(island: dict) -> float:

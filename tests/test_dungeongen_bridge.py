@@ -865,3 +865,73 @@ def test_the_alcove_door_is_not_drawn_but_still_opens_the_wall():
                         untouched += 1
     assert silenced > 20, f"expected plenty of alcove doors, found {silenced}"
     assert untouched > 20, f"expected plenty of ordinary doors, found {untouched}"
+
+
+def test_the_alcove_opening_is_a_plain_gap_not_dungeongens_lobe():
+    """The alcove opens through a rectangle we cut, not through the chip
+    dungeongen would have used.
+
+    Its chip is not decoration - it *is* the opening, the piece of floor that
+    bridges the wall - but its shape is a rounded lobe a third of a cell
+    across, drawn to sit half-hidden inside a room of ordinary size. An alcove
+    is one cell, so there is nowhere for it to hide: it bulges into the middle
+    of the floor and reads as a pear stuck to the doorway. Moving the door out
+    to the boundary cell hides the lobe but seals the alcove, so it is the
+    shape that has to change, not the position.
+
+    Asserted on the geometry rather than on pixels, because a pixel scan of
+    this cell cannot tell a wall from the staircase's own widest tread, which
+    dungeongen draws right on the cell edge. What matters is that the alcove
+    stays a region of its own - that is where its three walls come from - and
+    that exactly one side of it is open."""
+    import sys
+    from dungeongen.constants import CELL_SIZE
+
+    exactly_one = sealed = several = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                try:
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                except Exception:
+                    continue
+                bridge._quieten_stair_alcoves(dg_map, built)
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                regions = dg_map._make_regions()
+                for stair in built.stairs.values():
+                    gx, gy = stair.x + off_x, stair.y + off_y
+                    cx = gx * CELL_SIZE + CELL_SIZE / 2
+                    cy = gy * CELL_SIZE + CELL_SIZE / 2
+                    mine = [r for r in regions if r.shape.contains(cx, cy)]
+                    if not mine:
+                        continue
+                    shape = mine[0].shape
+                    # a point past each wall: only a side the region reaches
+                    # through is open
+                    step = CELL_SIZE * 0.7
+                    open_sides = sum(
+                        1 for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0))
+                        if shape.contains(cx + dx * step, cy + dy * step)
+                    )
+                    if open_sides == 1:
+                        exactly_one += 1
+                    elif open_sides == 0:
+                        sealed += 1
+                    else:
+                        several += 1
+    assert exactly_one > 80, f"expected plenty of alcoves, found {exactly_one}"
+    assert sealed == 0, (
+        f"{sealed} alcoves are sealed on all four sides - the steps cannot be "
+        f"reached, which is what an earlier attempt shipped"
+    )
+    # A handful open on more than one side, where the alcove's own cell abuts
+    # something else that reaches into it. Bounded rather than forbidden.
+    assert several <= exactly_one * 0.1, (
+        f"{several} of {exactly_one + several} alcoves open on more than one "
+        f"side; that used to be none of them"
+    )
