@@ -199,8 +199,18 @@ Identifying an alcove by size ("the only room one cell across") was wrong -
 real rooms come out 1x1 too. It is done by position now, against the stair
 cells the dungeon was built from.
 
-Still open: at one cell the alcove reads tight, its wall and the door glyph
-taking most of the space the steps have.
+The door is not drawn. It has to *exist* - that is what keeps the alcove its
+own region - but no die rolled it, and dungeongen puts its leaf in the middle
+of the cell, on top of the staircase: seed 72's stairs 23 show two steps with
+it on and three with it off. Silencing it costs nothing, and that is the part
+worth knowing: the opening is the door's chip meeting the passage that ends
+there, and the region paints that itself, so the edges measure the same either
+way (N/S/W solid, E open at 15%). That separation only holds in this
+arrangement - a chip with no passage terminating at it opens nothing, glyph or
+no glyph, which is what the sealed version shipped.
+
+Still open: at one cell the alcove reads tight, its own wall taking much of
+the space the steps have.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 

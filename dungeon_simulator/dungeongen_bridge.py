@@ -811,6 +811,7 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     if not dg_dungeon.stairs:
         return
     from dungeongen.map.room import Room as _MapRoom
+    from dungeongen.map.door import Door as _MapDoor
     from dungeongen.map.props import StairsProp as _StairsProp
     from dungeongen.graphics.rotation import Rotation as _Rotation
     from dungeongen.constants import CELL_SIZE
@@ -862,6 +863,27 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
             alcove.add_prop(_StairsProp.at_grid(
                 cell[0], cell[1],
                 rotations.get(stair_at[cell].direction, _Rotation.ROT_0)))
+
+    # The door that opens the alcove is not drawn. It has to *exist* - closed,
+    # tied to the passage that ends there - because that is what keeps the
+    # alcove its own region and so its three walls. But no die ever rolled a
+    # door here, and dungeongen draws its leaf in the middle of the cell,
+    # squarely on top of the staircase: with it on, seed 72's stairs 23 show
+    # two steps, with it off, three.
+    #
+    # Silencing it costs nothing, which is the part worth knowing. The opening
+    # is not the glyph - it is the door's floor chip meeting the passage that
+    # terminates there, and the region draws that itself
+    # (`region.shape.draw`, independent of any element's own draw). Measured
+    # on the same cell either way: north, south and west solid, east open at
+    # 15%. That is only true in this arrangement; a chip with no passage
+    # ending at it opens nothing at all, glyph or no glyph.
+    for element in dg_map._elements:
+        if not isinstance(element, _MapDoor):
+            continue
+        cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
+        if cell in alcoves:
+            element.draw = lambda *args, **kwargs: None
 
 
 def island_extent_map_units(island: dict) -> float:

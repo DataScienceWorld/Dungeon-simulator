@@ -806,3 +806,62 @@ def test_stairs_get_an_alcove_of_their_own_with_the_steps_in_it():
                     )
                     checked += 1
     assert checked > 50, f"expected plenty of stairs, found {checked}"
+
+
+def test_the_alcove_door_is_not_drawn_but_still_opens_the_wall():
+    """The door has to exist and must not be seen.
+
+    It has to exist because it is what keeps the alcove its own region, and
+    so its three walls. It must not be seen because no die rolled a door
+    there, and because dungeongen draws its leaf in the *middle* of the cell,
+    squarely over the staircase - seed 72's stairs 23 show two steps with it
+    on and three with it off.
+
+    The two are separable here, and that is the whole point: the opening is
+    not the glyph, it is the door's floor chip meeting the passage that ends
+    at it, and the region paints that itself. Which is exactly what is *not*
+    true of a chip with no passage terminating there - that one opens nothing
+    whether its glyph is drawn or not, which is how an earlier attempt shipped
+    an alcove sealed on all four sides."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.door import Door as _MapDoor
+
+    silenced = untouched = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                bridge._quieten_stair_alcoves(dg_map, built)
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                alcove_cells = {(s.x + off_x, s.y + off_y)
+                                for s in built.stairs.values()}
+                for element in dg_map._elements:
+                    if not isinstance(element, _MapDoor):
+                        continue
+                    cell = (round(element._x / CELL_SIZE),
+                            round(element._y / CELL_SIZE))
+                    # Whether the instance carries a draw of its own, not
+                    # `el.draw is not type(el).draw` - accessing the class
+                    # attribute builds a fresh bound method every time, so
+                    # that comparison is true for every door on the map.
+                    hidden = "draw" in vars(element)
+                    if cell in alcove_cells:
+                        assert hidden, (
+                            f"seed {seed}: the door at {cell} opens a stairs alcove "
+                            f"but is still drawn, over the steps it shares the cell with"
+                        )
+                        silenced += 1
+                    else:
+                        # every other door on the map keeps its glyph - this
+                        # must not become "no door is ever drawn"
+                        assert not hidden, (
+                            f"seed {seed}: an ordinary door at {cell} was silenced"
+                        )
+                        untouched += 1
+    assert silenced > 20, f"expected plenty of alcove doors, found {silenced}"
+    assert untouched > 20, f"expected plenty of ordinary doors, found {untouched}"
