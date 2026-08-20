@@ -935,3 +935,61 @@ def test_the_alcove_opening_is_a_plain_gap_not_dungeongens_lobe():
         f"{several} of {exactly_one + several} alcoves open on more than one "
         f"side; that used to be none of them"
     )
+
+
+def test_the_alcove_staircase_stays_clear_of_the_cell_edges():
+    """No tread may reach the wall, because on one side the wall is the door.
+
+    dungeongen's own staircase is drawn to meet the walls: six treads across
+    the full width, the widest sitting exactly on the cell boundary
+    (`y = -CELL_SIZE/2`) with a small overhang past it to cover the grid dots.
+    In a passage that is right. In the alcove the boundary the treads ascend
+    toward *is* the doorway, so the top tread lands across the opening and
+    closes it up again - the east edge measured 15% open with the steps
+    stripped and 0% with them drawn, i.e. the staircase, not the wall, was
+    what sealed it.
+
+    Checked by capturing what the prop draws rather than by rendering: a pixel
+    scan of this cell cannot tell a tread from a wall, which is the whole
+    problem."""
+    import skia
+    from dungeongen.constants import CELL_SIZE
+
+    class _Recorder:
+        def __init__(self):
+            self.lines = []
+
+        def drawLine(self, x0, y0, x1, y1, paint):
+            self.lines.append((x0, y0, x1, y1))
+
+    class _Options:
+        border_width = 3.0
+
+    class _Map:
+        options = _Options()
+
+    stairs = bridge._alcove_stairs_class().at_grid(0, 0)
+    stairs._map = _Map()
+    canvas = _Recorder()
+    from dungeongen.map.enums import Layers
+    stairs._draw_content(canvas, None, Layers.PROPS)
+
+    assert len(canvas.lines) >= 4, "expected a staircase, got almost nothing"
+    half = CELL_SIZE / 2
+    for x0, y0, x1, y1 in canvas.lines:
+        for value in (x0, x1):
+            assert abs(value) < half, (
+                f"a tread reaches {value:.1f} from the cell centre, at or past "
+                f"the wall at {half:.1f} - on the door's side that closes the way in"
+            )
+        for value in (y0, y1):
+            assert abs(value) < half, (
+                f"a tread sits at {value:.1f}, on the cell boundary at {half:.1f}"
+            )
+    # and it should still look like stairs: treads of differing lengths,
+    # tapering, not a blob of equal bars
+    lengths = sorted(abs(x1 - x0) for x0, _, x1, _ in canvas.lines)
+    assert lengths[-1] > lengths[0] * 2, (
+        f"the treads barely taper ({lengths[0]:.1f} to {lengths[-1]:.1f}); "
+        f"the perspective that makes them read as stairs is gone"
+    )

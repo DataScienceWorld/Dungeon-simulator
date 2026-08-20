@@ -792,6 +792,56 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
 _MAX_MAP_UNITS = 2800  # comfortably under the ~3200 limit, padding+inflation included
 
 
+# How much of its cell the alcove staircase is drawn across. dungeongen's own
+# steps run the full width and put the *widest* tread exactly on the cell
+# boundary (`y = -CELL_SIZE/2`, plus a small overhang to cover the grid dots).
+# For an ordinary passage that is right - the treads should meet its walls -
+# but the alcove's boundary on that side is its doorway, so the top step lands
+# across the opening and closes it up again. Drawn a little smaller, no tread
+# reaches the wall and the doorway stays clear.
+_ALCOVE_STAIR_SCALE = 0.66
+
+_ALCOVE_STAIRS_CLASS = None
+
+
+def _alcove_stairs_class():
+    """dungeongen's staircase, drawn inside the cell instead of across it.
+
+    Subclassed rather than nudged: the geometry is all inside `_draw_content`,
+    which takes no size of its own, so there is nothing to pass. Everything
+    else about the prop - its 1x1 footprint, its rotation, how the map hangs it
+    off an element - is inherited untouched."""
+    global _ALCOVE_STAIRS_CLASS
+    if _ALCOVE_STAIRS_CLASS is None:
+        import skia
+        from dungeongen.constants import CELL_SIZE
+        from dungeongen.map.enums import Layers
+        from dungeongen.map.props import StairsProp
+
+        class _AlcoveStairs(StairsProp):
+            def _draw_content(self, canvas, bounds, layer=Layers.PROPS) -> None:
+                if layer is not Layers.PROPS:
+                    return
+                paint = skia.Paint(
+                    AntiAlias=True, Style=skia.Paint.kStroke_Style,
+                    StrokeWidth=self._map.options.border_width * 0.5,
+                    Color=skia.Color(0, 0, 0),
+                )
+                # Same six treads and the same taper as the original; only the
+                # extent changes, and the overhang is dropped with it.
+                steps, widest, narrowest = 6, _ALCOVE_STAIR_SCALE, 0.15
+                run = CELL_SIZE * _ALCOVE_STAIR_SCALE
+                spacing = run / (steps - 1)
+                for i in range(steps):
+                    t = i / (steps - 1)
+                    y = -run / 2 + spacing * i
+                    half = CELL_SIZE * (widest - t * (widest - narrowest)) / 2
+                    canvas.drawLine(-half, y, half, y, paint)
+
+        _ALCOVE_STAIRS_CLASS = _AlcoveStairs
+    return _ALCOVE_STAIRS_CLASS
+
+
 def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     """Fix up the one-cell rooms the stairs are drawn in.
 
@@ -842,28 +892,22 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
                 element.remove_prop(prop)
 
     for cell, alcove in alcoves.items():
-        if any(isinstance(x, _StairsProp) for x in alcove.props):
-            continue
-        # Take the staircase back off whatever the adapter hung it on...
-        moved = False
+        # Whatever the adapter hung this staircase on, take it off there: it
+        # looks for a passage before a room and falls back to `passages[0]`,
+        # so with a stairs cell no longer being a passage the steps can land
+        # on an unrelated corridor - or be dropped, on an island with no
+        # passages left at all.
         for element in dg_map._elements:
-            if element is alcove:
-                continue
             for prop in [x for x in getattr(element, "props", [])
                          if isinstance(x, _StairsProp)]:
                 pos = prop.position
                 if (round(pos[0] / CELL_SIZE), round(pos[1] / CELL_SIZE)) == cell:
                     element.remove_prop(prop)
-                    alcove.add_prop(prop)
-                    moved = True
-                    break
-            if moved:
-                break
-        # ...or build it, when it was dropped for want of any passage at all.
-        if not moved:
-            alcove.add_prop(_StairsProp.at_grid(
-                cell[0], cell[1],
-                rotations.get(stair_at[cell].direction, _Rotation.ROT_0)))
+        # And draw our own, which is the same staircase kept clear of the
+        # cell's edges - see _alcove_stairs_class.
+        alcove.add_prop(_alcove_stairs_class().at_grid(
+            cell[0], cell[1],
+            rotations.get(stair_at[cell].direction, _Rotation.ROT_0)))
 
     # The door that opens the alcove is not drawn. It has to *exist* - closed,
     # tied to the passage that ends there - because that is what keeps the

@@ -220,9 +220,41 @@ plain rectangle straddling the wall now. Alcoves with exactly one side open,
 over 20 seeds: **13 -> 110**, none sealed; six open on more than one side,
 where the cell abuts something that reaches into it.
 
-Still open: at one cell the alcove reads tight, its own wall taking much of
-the space the steps have - and the staircase's widest tread is drawn *on* the
-cell edge, which for these stairs is the edge the opening is in.
+The staircase is drawn smaller than dungeongen draws it, at
+`_ALCOVE_STAIR_SCALE` of the cell. Its own six treads run the full width with
+the widest sitting exactly on the cell boundary (`y = -CELL_SIZE/2`, plus an
+overhang to cover the grid dots) - right for a passage, whose walls the treads
+should meet, but in the alcove that boundary is the doorway, so the top tread
+landed across the opening and closed it. Measured on the east edge of seed
+72's stairs 23: **15% open with the steps stripped and 0% with them drawn**,
+i.e. the staircase, not the wall, was sealing it. Inset, it is 14% either way.
+
+### Still open: the doorway chip protrudes into the corridor
+
+The chip that opens the alcove is a rectangle straddling the wall, and the
+half of it past the wall is drawn with an outline of its own - the alcove and
+the corridor being separate regions, each outlines what it owns. It reads as a
+small walled box budding off the corridor, its top continuing the alcove's
+north wall.
+
+**Do not fix this by tuning the rectangle's depth.** That was tried: squaring
+it off at the wall's outer face halves the protrusion (ink past the wall 26% →
+14% of a cell) and the doorway still measures open to a pixel scan - but the
+region probe then finds only 5 alcoves with exactly one open side instead of
+110. Pixel scan and region probe disagree, and until that is understood
+neither can be trusted; the tuned depth was reverted for exactly that reason.
+
+The principled fix is almost certainly to stop returning a whole rectangle
+from `get_side_shape`. dungeongen's own door returns **only the half on the
+connected element's side** (`_left_group` / `_right_group`, chosen by
+comparing centres), so the room's region and the passage's region take a half
+each and meet exactly on the line - which is why an ordinary doorway has no
+protrusion at all. Ours hands the whole rectangle to whoever asks, so the
+alcove takes the corridor's half too. Splitting it the same way needs the two
+halves to meet *on the wall*, and the door's centre is half a cell off it,
+which is the part still to work out. Putting the door on the corridor cell
+instead - where dungeongen puts it for every ordinary room - has been measured
+three times now and comes out **sealed**.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 
