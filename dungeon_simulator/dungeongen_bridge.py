@@ -842,6 +842,21 @@ def _alcove_stairs_class():
     return _ALCOVE_STAIRS_CLASS
 
 
+def _alcove_cell_of(element, alcove_cells):
+    """The stairs cell this element is the alcove for, or None.
+
+    By position against the cells the dungeon was built from - not by size.
+    "The only room one cell across" was tried and is wrong: real rooms come
+    out 1x1 too, and they were having their decoration stripped."""
+    from dungeongen.map.room import Room as _MapRoom
+    from dungeongen.constants import CELL_SIZE
+    if not isinstance(element, _MapRoom):
+        return None
+    bounds = element.shape.bounds
+    cell = (round(bounds.x / CELL_SIZE), round(bounds.y / CELL_SIZE))
+    return cell if cell in alcove_cells else None
+
+
 def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     """Fix up the one-cell rooms the stairs are drawn in.
 
@@ -890,6 +905,18 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
             alcoves[cell] = element
             for prop in [x for x in element.props if not isinstance(x, _StairsProp)]:
                 element.remove_prop(prop)
+            # No corner decoration either. `Room.draw` marks its four corners
+            # with brackets `CORNER_SIZE` long (0.35 of a cell) set
+            # `CORNER_INSET` in from the edges (0.12) - reads as decoration in
+            # a room several cells across, but an alcove is one cell, so the
+            # bracket lands 7.7px from a wall whose stroke already takes 4.6
+            # of them and the two merge into one fat band. Measured along the
+            # alcove's north wall, the wall itself is 9.2px centred exactly on
+            # the grid line - the same as any room's - with the bracket as a
+            # second band beside it, the two running together towards the
+            # corner into 20px of ink. Only `draw_corners` goes; the room
+            # still draws its walls and its staircase.
+            element.draw_corners = lambda *args, **kwargs: None
 
     for cell, alcove in alcoves.items():
         # Whatever the adapter hung this staircase on, take it off there: it

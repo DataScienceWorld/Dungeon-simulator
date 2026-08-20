@@ -992,3 +992,52 @@ def test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness():
                     )
                     checked += 1
     assert checked > 40, f"expected plenty of alcove doorways, found {checked}"
+
+
+def test_the_alcove_has_no_corner_decoration():
+    """A one-cell room has no room for the corner marks a room normally gets.
+
+    `Room.draw` brackets its four corners: `CORNER_SIZE` long (0.35 of a cell)
+    set `CORNER_INSET` in from the edges (0.12). Across four or five cells
+    that reads as decoration. In one cell the bracket lands 7.7px from a wall
+    whose stroke already occupies 4.6 of them, and the two run together into a
+    single fat band - measured along the alcove's north wall, the wall itself
+    is 9.2px centred exactly on the grid line, the same as any room's, with
+    the bracket as a second band beside it and the pair merging to 20px
+    towards the corner. It is what makes the alcove look swollen where it
+    meets the corridor.
+
+    Only the brackets go: the room still draws its walls, and still draws the
+    staircase it holds."""
+    ordinary = alcoves = 0
+    for seed in range(15):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                try:
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                except Exception:
+                    continue
+                bridge._quieten_stair_alcoves(dg_map, built)
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                cells = {(s.x + off_x, s.y + off_y) for s in built.stairs.values()}
+                for element in dg_map._elements:
+                    cell = bridge._alcove_cell_of(element, cells)
+                    silenced = "draw_corners" in element.__dict__
+                    if cell is not None:
+                        assert silenced, (
+                            f"seed {seed}: the alcove at {cell} still draws its corner "
+                            f"brackets, which merge with its own wall at this size"
+                        )
+                        alcoves += 1
+                    elif hasattr(element, "draw_corners"):
+                        assert not silenced, (
+                            f"seed {seed}: an ordinary room lost its corner marks"
+                        )
+                        ordinary += 1
+    assert alcoves > 30, f"expected plenty of alcoves, found {alcoves}"
+    assert ordinary > 30, f"expected plenty of ordinary rooms, found {ordinary}"

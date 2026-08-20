@@ -229,6 +229,27 @@ landed across the opening and closed it. Measured on the east edge of seed
 72's stairs 23: **15% open with the steps stripped and 0% with them drawn**,
 i.e. the staircase, not the wall, was sealing it. Inset, it is 14% either way.
 
+### Why the alcove looked swollen where it met the corridor - the corner marks
+
+`Room.draw` brackets a room's four corners: `CORNER_SIZE` long (0.35 of a
+cell), set `CORNER_INSET` in from the edges (0.12). Over four or five cells
+that is decoration well clear of the walls. In one cell the bracket lands
+7.7px from a wall whose stroke already takes 4.6 of them, and the 3px of white
+left between them closes under antialiasing - towards the corner the two run
+together into a single 20px band, which is what read as the alcove's wall
+bulging into the corridor.
+
+The wall itself was never wrong. Measured along the alcove's north wall it is
+9.2px centred **exactly** on the grid line, the same as the south wall of
+room 14 next to it (13.928..14.073 against 14.927..15.072). Two separate
+strokes, each the right thickness, merging - not one thick one.
+
+Alcoves do not draw their corner marks now. Only `draw_corners` goes; the
+walls and the staircase still draw.
+
+    x=21.30 before:  14.927..15.072, 15.121..15.154   wall + bracket
+    x=21.30 after:   14.927..15.072                   wall alone
+
 ### The doorway reaches one wall thickness past the wall
 
 The chip that opens the alcove reaches one `border_width` past the wall, and
