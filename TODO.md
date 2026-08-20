@@ -229,32 +229,38 @@ landed across the opening and closed it. Measured on the east edge of seed
 72's stairs 23: **15% open with the steps stripped and 0% with them drawn**,
 i.e. the staircase, not the wall, was sealing it. Inset, it is 14% either way.
 
-### Still open: the doorway chip protrudes into the corridor
+### The doorway overshoots the wall by one thickness, and cannot do less
 
-The chip that opens the alcove is a rectangle straddling the wall, and the
-half of it past the wall is drawn with an outline of its own - the alcove and
-the corridor being separate regions, each outlines what it owns. It reads as a
-small walled box budding off the corridor, its top continuing the alcove's
-north wall.
+The chip that opens the alcove reaches one `border_width` past the wall, and
+the alcove's north wall visibly runs that far into the corridor: measured on
+seed 72's stairs 23, its north wall reaches 0.14 of a cell past the corner
+against 0.07 for its own south wall, which has no doorway.
 
-**Do not fix this by tuning the rectangle's depth.** That was tried: squaring
-it off at the wall's outer face halves the protrusion (ink past the wall 26% →
-14% of a cell) and the doorway still measures open to a pixel scan - but the
-region probe then finds only 5 alcoves with exactly one open side instead of
-110. Pixel scan and region probe disagree, and until that is understood
-neither can be trusted; the tuned depth was reverted for exactly that reason.
+That is the floor, not a value left untuned. The alcove and the corridor are
+separate regions, so each outlines what it owns and the part of the chip past
+the wall gets outlined too - but squaring the chip off *at* the line, or at
+half a thickness, makes the alcove measure **shut on all four sides**: a
+region has to clear its own wall stroke before it reads as open. One thickness
+is the least that opens it, and
+`test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness` pins
+both ends, failing at a deeper chip and at a flush one.
 
-The principled fix is almost certainly to stop returning a whole rectangle
-from `get_side_shape`. dungeongen's own door returns **only the half on the
-connected element's side** (`_left_group` / `_right_group`, chosen by
-comparing centres), so the room's region and the passage's region take a half
-each and meet exactly on the line - which is why an ordinary doorway has no
-protrusion at all. Ours hands the whole rectangle to whoever asks, so the
-alcove takes the corridor's half too. Splitting it the same way needs the two
-halves to meet *on the wall*, and the door's centre is half a cell off it,
-which is the part still to work out. Putting the door on the corridor cell
-instead - where dungeongen puts it for every ordinary room - has been measured
-three times now and comes out **sealed**.
+Getting rid of the overshoot for good means the corridor's region supplying
+the outer half, the way dungeongen's own door splits `_left_group` /
+`_right_group` between the two sides. Handing our chip out whole is what makes
+the alcove own both halves. The obstacle is that those halves meet at the
+door's centre, and on the alcove's cell that centre is half a cell inside the
+wall; putting the door on the corridor cell instead - where dungeongen puts it
+for every ordinary room - has been measured three times and comes out sealed.
+
+**A warning about measuring any of this.** `_make_regions` inflates every
+shape by `REGION_INFLATE` (CELL_SIZE * 0.025) before drawing, so probing a
+region for "is this side open" says yes on all four sides of every alcove - 42
+of 43 over eight seeds. A probe further out stops saying yes only where the
+chip protrudes, which reads like an opening test and is really a protrusion
+test: an earlier version of the test above was written that way and duly
+failed the flusher chip as a regression. Measure the rectangle handed over, or
+scan the rendered wall line; do not ask the region.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 

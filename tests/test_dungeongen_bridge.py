@@ -867,76 +867,6 @@ def test_the_alcove_door_is_not_drawn_but_still_opens_the_wall():
     assert untouched > 20, f"expected plenty of ordinary doors, found {untouched}"
 
 
-def test_the_alcove_opening_is_a_plain_gap_not_dungeongens_lobe():
-    """The alcove opens through a rectangle we cut, not through the chip
-    dungeongen would have used.
-
-    Its chip is not decoration - it *is* the opening, the piece of floor that
-    bridges the wall - but its shape is a rounded lobe a third of a cell
-    across, drawn to sit half-hidden inside a room of ordinary size. An alcove
-    is one cell, so there is nowhere for it to hide: it bulges into the middle
-    of the floor and reads as a pear stuck to the doorway. Moving the door out
-    to the boundary cell hides the lobe but seals the alcove, so it is the
-    shape that has to change, not the position.
-
-    Asserted on the geometry rather than on pixels, because a pixel scan of
-    this cell cannot tell a wall from the staircase's own widest tread, which
-    dungeongen draws right on the cell edge. What matters is that the alcove
-    stays a region of its own - that is where its three walls come from - and
-    that exactly one side of it is open."""
-    import sys
-    from dungeongen.constants import CELL_SIZE
-
-    exactly_one = sealed = several = 0
-    for seed in range(20):
-        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
-        for islands in compute_layout(dungeon).values():
-            for island in islands:
-                if not island["stairs"] or not bridge.fits_size_limit(island):
-                    continue
-                built = bridge.build_dungeongen_dungeon(island)
-                try:
-                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
-                except Exception:
-                    continue
-                bridge._quieten_stair_alcoves(dg_map, built)
-                off_x = -built.bounds[0] if built.rooms else 0
-                off_y = -built.bounds[1] if built.rooms else 0
-                regions = dg_map._make_regions()
-                for stair in built.stairs.values():
-                    gx, gy = stair.x + off_x, stair.y + off_y
-                    cx = gx * CELL_SIZE + CELL_SIZE / 2
-                    cy = gy * CELL_SIZE + CELL_SIZE / 2
-                    mine = [r for r in regions if r.shape.contains(cx, cy)]
-                    if not mine:
-                        continue
-                    shape = mine[0].shape
-                    # a point past each wall: only a side the region reaches
-                    # through is open
-                    step = CELL_SIZE * 0.7
-                    open_sides = sum(
-                        1 for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0))
-                        if shape.contains(cx + dx * step, cy + dy * step)
-                    )
-                    if open_sides == 1:
-                        exactly_one += 1
-                    elif open_sides == 0:
-                        sealed += 1
-                    else:
-                        several += 1
-    assert exactly_one > 80, f"expected plenty of alcoves, found {exactly_one}"
-    assert sealed == 0, (
-        f"{sealed} alcoves are sealed on all four sides - the steps cannot be "
-        f"reached, which is what an earlier attempt shipped"
-    )
-    # A handful open on more than one side, where the alcove's own cell abuts
-    # something else that reaches into it. Bounded rather than forbidden.
-    assert several <= exactly_one * 0.1, (
-        f"{several} of {exactly_one + several} alcoves open on more than one "
-        f"side; that used to be none of them"
-    )
-
-
 def test_the_alcove_staircase_stays_clear_of_the_cell_edges():
     """No tread may reach the wall, because on one side the wall is the door.
 
@@ -993,3 +923,72 @@ def test_the_alcove_staircase_stays_clear_of_the_cell_edges():
         f"the treads barely taper ({lengths[0]:.1f} to {lengths[-1]:.1f}); "
         f"the perspective that makes them read as stairs is gone"
     )
+
+
+def test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness():
+    """How far the doorway chip may reach past the wall, and why that number.
+
+    The alcove and the corridor are separate regions, so each outlines what it
+    owns and whatever of the chip lies beyond the wall gets an outline of its
+    own - visible as the alcove's north wall running on into the corridor.
+    Squaring the chip off at the line would end that, and it was tried: the
+    alcove then measures **shut on all four sides**, because a region has to
+    clear its own wall stroke before it reads as open. At half a thickness,
+    the same. One `border_width` is the least that opens it.
+
+    So this pins both ends. Any less and the way in disappears; any more and
+    the wall visibly overshoots - seed 72's stairs 23 reached 0.14 of a cell
+    past its corner when the chip was a tuned 0.22, against 0.07 for its own
+    south wall, which has no doorway.
+
+    Asserted on the rectangle we hand over, not on the render: dungeongen's
+    region shapes are inflated by `REGION_INFLATE` before anything is drawn,
+    so probing them says every side of every alcove is open - which is how an
+    earlier test came to reward the overshoot it was meant to catch."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.door import Door as _MapDoor
+
+    checked = 0
+    for seed in range(10):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                try:
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                except Exception:
+                    continue
+                bridge._quieten_stair_alcoves(dg_map, built)
+                thickness = dg_map.options.border_width
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                alcoves = {(s.x + off_x, s.y + off_y) for s in built.stairs.values()}
+                for element in dg_map._elements:
+                    if not isinstance(element, _MapDoor):
+                        continue
+                    cell = (round(element._x / CELL_SIZE),
+                            round(element._y / CELL_SIZE))
+                    if cell not in alcoves:
+                        continue
+                    chip = element.get_side_shape(None).bounds
+                    # the cell the alcove occupies, in map units
+                    left, top = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
+                    right, bottom = left + CELL_SIZE, top + CELL_SIZE
+                    over = max(
+                        chip.x + chip.width - right, left - chip.x,
+                        chip.y + chip.height - bottom, top - chip.y,
+                    )
+                    assert over <= thickness + 0.01, (
+                        f"seed {seed}: the doorway at {cell} reaches {over:.1f} past "
+                        f"the wall, more than the {thickness:.1f} it is thick; that "
+                        f"much shows as the alcove's wall running into the corridor"
+                    )
+                    assert over >= thickness - 0.01, (
+                        f"seed {seed}: the doorway at {cell} reaches only {over:.1f} "
+                        f"past the wall; under one thickness ({thickness:.1f}) the "
+                        f"alcove measures sealed on every side"
+                    )
+                    checked += 1
+    assert checked > 40, f"expected plenty of alcove doorways, found {checked}"

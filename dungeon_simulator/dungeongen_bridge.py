@@ -953,18 +953,33 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
         # (measured: the wall comes out unbroken), so the shape has to change
         # rather than the position. A rectangle straddling the wall is the
         # plainest thing that still bridges it, and it leaves the cell square.
+        # Asymmetric, and the outward reach is a measurement rather than a
+        # taste: one wall thickness, which is the least that opens the way.
+        #
+        # The alcove and the corridor are separate regions - that is where the
+        # alcove's walls come from - so each outlines what it owns, and
+        # whatever of this chip lies past the wall is outlined too. It shows as
+        # the alcove's north wall running a little into the corridor. Squaring
+        # the chip off *at* the line would end that, but it also seals the
+        # alcove: the region has to clear its own wall stroke to read as open,
+        # and at half a thickness, or none, the doorway measures shut on every
+        # side. So the overshoot is one `border_width` - the minimum that
+        # works - and no more. Seed 72's stairs 23: its north wall reaches
+        # 0.14 of a cell past the corner at 0.22, and 0.07 at this - the same
+        # as its own south wall, which has no doorway at all.
         x0, y0 = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
-        depth, span = CELL_SIZE * 0.22, CELL_SIZE * 0.6
+        inside, outside = CELL_SIZE * 0.2, dg_map.options.border_width
+        span = CELL_SIZE * 0.6
         inset = (CELL_SIZE - span) / 2
         if side in ("E", "W"):
             gap = _Rectangle(
-                (x0 + CELL_SIZE - depth) if side == "E" else (x0 - depth),
-                y0 + inset, depth * 2, span)
+                (x0 + CELL_SIZE - inside) if side == "E" else (x0 - outside),
+                y0 + inset, inside + outside, span)
         else:
             gap = _Rectangle(
                 x0 + inset,
-                (y0 + CELL_SIZE - depth) if side == "S" else (y0 - depth),
-                span, depth * 2)
+                (y0 + CELL_SIZE - inside) if side == "S" else (y0 - outside),
+                span, inside + outside)
         chip = _ShapeGroup(includes=[gap], excludes=[])
         element.get_side_shape = lambda connected, _chip=chip: _chip
 
