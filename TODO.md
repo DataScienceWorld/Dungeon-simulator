@@ -229,28 +229,37 @@ landed across the opening and closed it. Measured on the east edge of seed
 72's stairs 23: **15% open with the steps stripped and 0% with them drawn**,
 i.e. the staircase, not the wall, was sealing it. Inset, it is 14% either way.
 
-### The doorway overshoots the wall by one thickness, and cannot do less
+### The doorway reaches one wall thickness past the wall
 
 The chip that opens the alcove reaches one `border_width` past the wall, and
-the alcove's north wall visibly runs that far into the corridor: measured on
-seed 72's stairs 23, its north wall reaches 0.14 of a cell past the corner
-against 0.07 for its own south wall, which has no doorway.
+that is the floor rather than a value left untuned: squaring it off *at* the
+line, or at half a thickness, makes the alcove measure **shut on all four
+sides**, because a region has to clear its own wall stroke before it reads as
+open. `test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness`
+pins both ends, failing at a deeper chip and at a flush one.
 
-That is the floor, not a value left untuned. The alcove and the corridor are
-separate regions, so each outlines what it owns and the part of the chip past
-the wall gets outlined too - but squaring the chip off *at* the line, or at
-half a thickness, makes the alcove measure **shut on all four sides**: a
-region has to clear its own wall stroke before it reads as open. One thickness
-is the least that opens it, and
-`test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness` pins
-both ends, failing at a deeper chip and at a flush one.
+**It does not lengthen the alcove's north wall, and an earlier version of this
+note said it did.** The chip runs east only and is centred on the wall it
+crosses (the middle 60%), so it never reaches the corner. Zeroing it leaves
+seed 72's alcove for stairs #23 measuring exactly the same along its north
+wall - ink to x=22.14 either way, against x=21.14 with no alcove at all. What
+sticks out at that corner is the corner join of the alcove's own outline.
 
-Getting rid of the overshoot for good means the corridor's region supplying
+Whether a one-cell room's corner join is heavier than an ordinary room's is
+**not** established. Two attempts to measure it were contaminated and should
+not be repeated in the same form: scanning the alcove's south wall for
+comparison picks up the corridor in (22,16) and the surrounding rock rather
+than the alcove, and diffing a render against one with the stairs removed
+changes dungeongen's decorative RNG, so the difference covers the whole
+window. An isolated comparison - the same corner on a 1x1 and on a larger
+room, both clear of other geometry - is the way to settle it.
+
+Getting rid of the overshoot entirely means the corridor's region supplying
 the outer half, the way dungeongen's own door splits `_left_group` /
-`_right_group` between the two sides. Handing our chip out whole is what makes
+`_right_group` between the two sides; handing our chip out whole is what makes
 the alcove own both halves. The obstacle is that those halves meet at the
 door's centre, and on the alcove's cell that centre is half a cell inside the
-wall; putting the door on the corridor cell instead - where dungeongen puts it
+wall. Putting the door on the corridor cell instead - where dungeongen puts it
 for every ordinary room - has been measured three times and comes out sealed.
 
 **A warning about measuring any of this.** `_make_regions` inflates every
@@ -259,8 +268,9 @@ region for "is this side open" says yes on all four sides of every alcove - 42
 of 43 over eight seeds. A probe further out stops saying yes only where the
 chip protrudes, which reads like an opening test and is really a protrusion
 test: an earlier version of the test above was written that way and duly
-failed the flusher chip as a regression. Measure the rectangle handed over, or
-scan the rendered wall line; do not ask the region.
+failed a flusher chip as a regression. Measure the rectangle handed over, or
+scan the rendered wall line - and check what else lies along that line before
+believing it.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 
