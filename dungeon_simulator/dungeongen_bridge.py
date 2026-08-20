@@ -97,6 +97,7 @@ _SHAPE_MAP = {
 _MIN_ROOM_GRID_UNITS = 2
 
 _COMPASS_TO_DG_DIRECTION = {"N": "north", "E": "east", "S": "south", "W": "west"}
+_OPPOSITE_COMPASS = {"N": "S", "S": "N", "E": "W", "W": "E"}
 
 
 def available() -> bool:
@@ -654,9 +655,15 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         if len(pts) >= 2:
             route_cells |= _path_cells(_pad_single_cell(_grid_cell_path(pts)))
 
+    stair_corridor_ids = {f"stairs{stair['id']}" for stair in island.get("stairs", [])}
     for index, corridor in enumerate(island["corridors"]):
         points = _dedupe(corridor["points"])
         if len(points) < 2:
+            continue
+        if corridor["id"] in stair_corridor_ids:
+            # Handed over below as a one-cell room instead, so the steps get
+            # walls of their own. As a passage it merged with whatever floor it
+            # touched and lost them.
             continue
         waypoints = _pad_single_cell(_grid_cell_path(points))
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
@@ -687,10 +694,80 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
     # silently falls back to `passages[0]` and the steps appear somewhere
     # unrelated, so a stair whose cell nothing covers is skipped and left to
     # the overlay.
+    alcove_cells: set[tuple] = set()
     for stair in island.get("stairs", []):
         cell = (stair.get("cell_x"), stair.get("cell_y"))
-        if cell[0] is None or cell not in drawn_cells:
+        if cell[0] is None:
             continue
+
+        # A one-cell room rather than a passage, and this is the whole point.
+        # dungeongen draws a wall only along the outline of a region, and two
+        # touching floor cells in the same region have no outline between them
+        # - so a stairs passage running alongside another corridor (32% of
+        # them) simply had no wall on that flank. A room of its own is its own
+        # region, so the alcove gets walls all round.
+        #
+        # Added straight here rather than through the loop above so it skips
+        # the small-room inflation: this one is meant to be exactly one cell.
+        # Unless the steps are inside a room already: some stairs are walked
+        # from a point that was itself in one, so the cell is that room's own
+        # floor. An alcove there would be a little box drawn inside a room -
+        # and two overlapping rooms, which dungeongen has no business being
+        # handed. The staircase still lands, via `_convert_stair`'s own room
+        # fallback.
+        # Two stairs can be walked onto the same cell; one alcove is one room,
+        # and a second identical one is two rooms drawn on top of each other.
+        # The stair itself is still handed over either way - it is only the
+        # alcove that must not be duplicated.
+        if cell in alcove_cells or any(
+                x0 <= cell[0] < x1 and y0 <= cell[1] < y1
+                for _, x0, y0, x1, y1 in room_bounds.values()):
+            room_id = None
+        else:
+            room_id = f"stair{stair['id']}"
+            alcove_cells.add(cell)
+            dungeon.add_room(_DGRoom(
+                x=cell[0], y=cell[1], width=1, height=1,
+                shape=_DGRoomShape.RECT, z=0, id=room_id, number=stair["id"],
+            ))
+        # And the way in - the same three pieces dungeongen uses for every
+        # ordinary room off a corridor, which is what this is: a room, a
+        # passage that *ends* in it, and a door on the wall between them,
+        # tied to that passage by `passage_id`.
+        #
+        # All three are needed together, and getting there took several wrong
+        # turns worth recording. A chip on its own (an Exit, or a door with no
+        # passage terminating at it) does not open anything - it is meant to
+        # sit in a wall two floors already reach. And leaving the cell a plain
+        # passage keeps it in the same region as whatever it touches, so the
+        # flank wall never gets drawn. A Room draws its own outline whatever
+        # region it is in, which is what supplies the other three walls.
+        #
+        # The door is CLOSED: an open one merges the regions and takes the
+        # wall with it (same reason a secret door goes over closed).
+        take = island.get("_takeoff", {}).get(f"stairs{stair['id']}")
+        if room_id is not None and take is not None:
+            towards = ("E" if take[0] > cell[0] else
+                       "W" if take[0] < cell[0] else
+                       "S" if take[1] > cell[1] else "N")
+            # The door faces *into* the alcove, away from the corridor it is
+            # entered from - the same sense dungeongen's own
+            # `_get_door_direction` produces, which measures from the room's
+            # centre outwards to the passage and so points back at the room.
+            # Handing over the corridor's own side instead leaves the wall
+            # closed: measured 0% opening on all four edges either way round
+            # until this was right.
+            approach = _DGPassage(
+                start_room=f"stairway{stair['id']}", end_room=room_id,
+                waypoints=[tuple(take), cell], width=1,
+            )
+            if dungeon.add_passage(approach):
+                dungeon.add_door(_DGDoor(
+                    x=cell[0], y=cell[1],
+                    direction=_COMPASS_TO_DG_DIRECTION[_OPPOSITE_COMPASS[towards]],
+                    door_type=_DGDoorType.CLOSED, room_id=room_id,
+                    passage_id=approach.id,
+                ))
         # Which way the steps face: the prop is oriented by the direction they
         # *ascend*. Going down, that is back the way you came.
         heading = stair.get("heading")
@@ -713,6 +790,78 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
 # would, so anything within reach of that limit is rejected up front rather
 # than risking the crash.
 _MAX_MAP_UNITS = 2800  # comfortably under the ~3200 limit, padding+inflation included
+
+
+def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
+    """Fix up the one-cell rooms the stairs are drawn in.
+
+    Two things, both consequences of using a room for the alcove:
+
+    - The adapter decorates every room it converts, and does it before the
+      stairs are converted at all, so a column or an altar lands on the steps.
+    - `_convert_stair` looks for a passage before it looks for a room and
+      falls back to `passages[0]`; now that a stairs cell is not a passage,
+      the staircase can end up on an unrelated corridor, or be dropped
+      outright on an island that has no passages left.
+
+    An alcove is identified by *position*, against the stair cells this
+    dungeon was built from. Identifying it by size instead ("the only room one
+    cell across") was wrong: real rooms come out 1x1 too, and they were having
+    their decoration stripped and their exits silenced."""
+    if not dg_dungeon.stairs:
+        return
+    from dungeongen.map.room import Room as _MapRoom
+    from dungeongen.map.props import StairsProp as _StairsProp
+    from dungeongen.graphics.rotation import Rotation as _Rotation
+    from dungeongen.constants import CELL_SIZE
+
+    # Same mapping `_convert_stair` uses: the steps are oriented by the way
+    # they ascend.
+    rotations = {"north": _Rotation.ROT_0, "south": _Rotation.ROT_180,
+                 "east": _Rotation.ROT_90, "west": _Rotation.ROT_270}
+    off_x = -dg_dungeon.bounds[0] if dg_dungeon.rooms else 0
+    off_y = -dg_dungeon.bounds[1] if dg_dungeon.rooms else 0
+    stair_at = {(stair.x + off_x, stair.y + off_y): stair
+                for stair in dg_dungeon.stairs.values()}
+
+    def alcove_cell(element):
+        if not isinstance(element, _MapRoom):
+            return None
+        bounds = element.shape.bounds
+        cell = (round(bounds.x / CELL_SIZE), round(bounds.y / CELL_SIZE))
+        return cell if cell in stair_at else None
+
+    alcoves = {}
+    for element in dg_map._elements:
+        cell = alcove_cell(element)
+        if cell is not None:
+            alcoves[cell] = element
+            for prop in [x for x in element.props if not isinstance(x, _StairsProp)]:
+                element.remove_prop(prop)
+
+    for cell, alcove in alcoves.items():
+        if any(isinstance(x, _StairsProp) for x in alcove.props):
+            continue
+        # Take the staircase back off whatever the adapter hung it on...
+        moved = False
+        for element in dg_map._elements:
+            if element is alcove:
+                continue
+            for prop in [x for x in getattr(element, "props", [])
+                         if isinstance(x, _StairsProp)]:
+                pos = prop.position
+                if (round(pos[0] / CELL_SIZE), round(pos[1] / CELL_SIZE)) == cell:
+                    element.remove_prop(prop)
+                    alcove.add_prop(prop)
+                    moved = True
+                    break
+            if moved:
+                break
+        # ...or build it, when it was dropped for want of any passage at all.
+        if not moved:
+            alcove.add_prop(_StairsProp.at_grid(
+                cell[0], cell[1],
+                rotations.get(stair_at[cell].direction, _Rotation.ROT_0)))
 
 
 def island_extent_map_units(island: dict) -> float:
@@ -840,6 +989,7 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
             island = _translated_island(island, -shift_x, -shift_y)
             dg_dungeon = build_dungeongen_dungeon(island)
     dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
+    _quieten_stair_alcoves(dg_map, dg_dungeon)
     bounds = dg_map.bounds
     pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells, dg_map.options.map_border_cells)
     width = max(1, round(bounds.width + 2 * pad_x))

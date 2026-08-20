@@ -140,7 +140,69 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
-## 4c. Stairs sit flush against another corridor in 32% of cases
+## 4c. Stairs get an alcove of their own
+
+The steps are drawn in a one-cell **room** rather than a passage, and that is
+what gives them walls. dungeongen draws a wall only along the outline of a
+region, so two touching floor cells inside one region have nothing to draw
+between them: as a passage, a stairs cell running alongside another corridor
+(32% of them - 60 of 185 over 40 seeds) had no wall on that flank at all. A
+room draws its own outline whatever region it sits in, which is where the
+three walls come from.
+
+Seed 72's stairs 23, longest ink-free run per edge, steps stripped so that
+only wall counts:
+
+| | N | S | E | W |
+|---|---|---|---|---|
+| as a passage | 15% open | 0 | 14% | 0 |
+| as an alcove | **0 - solid** | 0 | **15% - the way in** | 0 |
+
+The way in is the same three pieces dungeongen uses for any room off a
+corridor, and **all three are needed together**: the room, a `Passage` that
+*ends* in it, and a **closed** `Door` between them carrying that passage's id.
+
+That took several wrong turns worth recording, because each failed silently:
+
+- a chip on its own opens nothing. An `Exit`, or a door with no passage
+  terminating at it, leaves the alcove **sealed on all four sides** - 0%
+  opening on every edge. A chip is made to sit in a wall two floors already
+  reach; it does not cut one by itself.
+- hiding the glyph does not help either, and for the same reason: what reads
+  as an opening is the glyph, so an `Exit` with its archway suppressed is just
+  a sealed box. (That version was committed and reverted - `4526914`,
+  `9946cc3`.)
+- the door must face **into** the alcove, away from the corridor. The other
+  way round measures 0% on all four edges, exactly like no door at all.
+- an **open** door would merge the regions and take the walls with it, the
+  same reason a secret door goes over closed.
+
+Two measurements misled me for a while and are worth not repeating: the
+staircase's own widest step line sits **on the cell edge**, so a pixel scan
+counts it as wall - strip the props before measuring; and
+`_quieten_stair_alcoves` *re-adds* a missing staircase, so stripping before it
+runs does nothing.
+
+Three guards this needed, each a real failure first:
+
+- an alcove whose cell falls inside a room is not created at all - it would be
+  a room drawn inside a room, and two overlapping rooms handed to dungeongen.
+- two stairs can be walked onto the same cell; the second gets no alcove (the
+  stair itself is still handed over).
+- `_convert_stair` looks for a passage before a room and falls back to
+  `passages[0]`, so with stairs no longer being passages the staircase could
+  land on an unrelated corridor or be dropped outright.
+  `_quieten_stair_alcoves` puts it back, or rebuilds it. Alcoves without their
+  steps: 0 of 116.
+
+Identifying an alcove by size ("the only room one cell across") was wrong -
+real rooms come out 1x1 too. It is done by position now, against the stair
+cells the dungeon was built from.
+
+Still open: at one cell the alcove reads tight, its wall and the door glyph
+taking most of the space the steps have.
+
+## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 
 The steps now have a floor - a stairs node emits a corridor for the length it
 walks, so its 10ft cell exists and dungeongen's own `StairsProp` (a 1x1 cell
@@ -149,9 +211,11 @@ stairs were on no corridor and no room at all, and the adapter's
 `_convert_stair` would have dumped the prop on `passages[0]` - silently, on an
 unrelated corridor somewhere else on the level.
 
-Reachability came with it, via the same takeoff-cell trick a branch uses:
-stairs in the same connected region as the corridor they leave from went
-**2% -> 76%** (4 -> 140 of 185), walled-off 164 -> 23.
+Measured while the stairs were still a passage: in the same connected
+region as the corridor they leave from, **2% -> 76%** (4 -> 140 of 185).
+That number does not carry over - an alcove is deliberately its own
+region now, reached through a closed door - so the connectivity question
+needs asking again in the new model before anything is claimed about it.
 
 What is left splits into two, neither of them the same bug:
 
@@ -163,33 +227,6 @@ What is left splits into two, neither of them the same bug:
 
 27 stairs have a takeoff cell no other route occupies, which is the union of
 those two cases.
-
-### The alcove attempt, and why it was reverted
-
-Tried and undone in `4526914` / `9946cc3`. The idea was sound and the
-mechanism is real: hand the stairs cell over as a one-cell **Room** instead of
-a Passage, so it is its own region and dungeongen draws it a full outline, and
-open one side with an **Exit** - which unlike a Door is *terminal* in
-`_trace_connected_region`, contributing its floor chip without merging the two
-regions. The north wall did appear: the cell's north edge went from 6.9% ink
-to 86.6% (a real wall measures ~100%).
-
-It was reverted because the alcove came out **sealed on all four sides**. A
-scan for the longest ink-free run along each edge found 0% on N, S, E and W -
-there was no way in at all. The Exit's floor chip does not cut the wall
-between two regions; what actually reads as an opening is the archway the Exit
-*draws*, and that archway had been suppressed precisely because it is the
-"way out" tunnel glyph that does not belong on a staircase.
-
-So the choice inside dungeongen is: archway and an opening, or no archway and
-no opening. There is no third chip provider - `get_side_shape` exists only on
-`Door` and `Exit`.
-
-Which leaves the layout fix as the one that can work: if the stairs cell does
-not touch a foreign route in the first place, dungeongen draws the wall itself,
-natively, and the cell stays legible. Shifting the stairs along their trunk to
-the first cell that flanks nothing (and only failing to place them when no such
-cell exists) is the shape of it.
 
 ## 5. Rooms that find nowhere to go are 10.2%
 
