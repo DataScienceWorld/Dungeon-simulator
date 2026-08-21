@@ -140,28 +140,45 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
-## 4bis. Adjacent rooms share a wall that draws half again as thick
+## 4bis. ~~Adjacent rooms share a wall that draws half again as thick~~ (done)
 
-Not ours, and not the alcove's: it is how dungeongen shades every room.
-`Map.render` draws the region's shadow untranslated and then its fill
-translated by `room_shadow_offset + border_width * 0.5` - (9, 11)px with the
-defaults. On a free-standing wall the shadow peeks out on one side and reads
-as a drop shadow, which is the intent. Where two rooms are adjacent the two
-offsets land on the same line and add up.
+dungeongen inflates every region by `REGION_INFLATE` (its own
+`CELL_SIZE * 0.025` = 1.6px) before drawing it. Two regions side by side are
+each inflated *towards* the other, so their outlines end up 3.2px apart and
+the two 6px strokes merge into one band half again as wide.
+
+    6.0 (stroke) + 2 x 1.6 (inflation) = 9.2px
 
 Measured on two rooms built by hand straight in dungeongen's own model, no
-layout of ours involved - A at x2..5 and B at x5..8, sharing the line x=5,
-sampled at mid-height away from the corners:
+layout of ours involved, and then again on seed 72:
 
-    shared wall (x=5.00):   4.928..5.073   9.2px, centred exactly on 5.000
-    outer wall  (x=2.00):   1.928..2.024   6.1px
+    shared wall, inflation 1.6:   9.2px
+    shared wall, inflation 0.8:   7.5px
+    shared wall, inflation 0:     6.0px, centred exactly on the grid line
+    free-standing wall, 0:        6.0px, centred exactly on the grid line
 
-So the outline is exactly on the grid line; what thickens is the shading
-around it. It shows up on the stairs alcove more than anywhere else only
-because the band is the same size while the room is a tenth of the size.
+It is off now (`_REGION_INFLATE_OVERRIDE`), which is what made the map read
+heavy - the stairs alcove worst of all, the band being the same width whatever
+the room's size. Seed 72's level-1 island drops from 2.4 MB of SVG to 1.76 MB
+as a side effect.
 
-Changing it means changing `room_shadow_offset` or the fill translation for
-the whole map, which is a look-of-the-map decision rather than a fix.
+Two things this cost before it worked. The shadow offset was blamed first and
+is innocent: zeroing `room_shadow_offset` moves the measurement not at all.
+And the constant has to stay swapped for the **whole** render - `_make_regions`
+runs inside `Map.render`, so patching around `convert_dungeon` alone changes
+nothing, which read as "the setting has no effect".
+
+Whether the inflation had a purpose is a guess: most likely welding a room to
+its corridor inside one region so no hairline shows between them. No seam has
+turned up without it across the sweep, but that is an absence of evidence, not
+a proof. If seams ever appear along a room-to-corridor join, put it back
+first.
+
+One good thing fell out: with the inflation off, asking whether a region
+reaches past a given wall means something again. At 1.6 the answer was yes on
+all four sides of every alcove (42 of 43 over eight seeds), which is how an
+earlier test came to measure the doorway's protrusion while believing it
+measured the doorway.
 
 ## 4c. Stairs get an alcove of their own
 

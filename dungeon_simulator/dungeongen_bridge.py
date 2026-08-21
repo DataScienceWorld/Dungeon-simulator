@@ -1011,6 +1011,54 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
         element.get_side_shape = lambda connected, _chip=chip: _chip
 
 
+# dungeongen inflates every region by this much before drawing it
+# (`REGION_INFLATE`, its own CELL_SIZE * 0.025 = 1.6px). Two regions that sit
+# side by side are therefore each inflated *towards* the other, so their
+# outlines end up 3.2px apart and the two 6px strokes merge into one band half
+# again as wide: the wall two adjacent rooms share measured 9.2px against
+# 6.1px for a free-standing one, both on the same map. At zero they are both
+# 6.0px and both centred exactly on the grid line.
+#
+# It is what made the map read heavy, and the stairs alcove heaviest of all -
+# the band is the same width whatever the room's size, so at one cell it
+# dominates. The shadow offset was blamed for this first and is innocent:
+# zeroing `room_shadow_offset` moves the measurement not at all.
+#
+# Set to None to leave dungeongen's own value alone. This is a guess about
+# what the inflation is *for* - most likely welding a room to its corridor
+# inside one region so no hairline shows between them - and no seam has turned
+# up without it, but that is an absence of evidence over the seeds looked at,
+# not a proof. If seams ever appear along a room-to-corridor join, this is the
+# first thing to put back.
+_REGION_INFLATE_OVERRIDE: float | None = 0.0
+
+
+class _region_inflation:
+    """dungeongen's region inflation, for the duration of a render.
+
+    A module constant rather than an option, so it has to be swapped in place
+    and put back. It must stay swapped for the *whole* render, not just the
+    conversion: `_make_regions` runs inside `Map.render`, so patching around
+    `convert_dungeon` alone changes nothing at all - which is exactly what the
+    first attempt at measuring this did, and it read as "the setting has no
+    effect"."""
+
+    def __enter__(self):
+        self._module = None
+        if _REGION_INFLATE_OVERRIDE is None:
+            return self
+        from dungeongen.map import map as _dg_map_module
+        self._module = _dg_map_module
+        self._previous = _dg_map_module.REGION_INFLATE
+        _dg_map_module.REGION_INFLATE = _REGION_INFLATE_OVERRIDE
+        return self
+
+    def __exit__(self, *exc):
+        if self._module is not None:
+            self._module.REGION_INFLATE = self._previous
+        return False
+
+
 def island_extent_map_units(island: dict) -> float:
     """The island's own footprint in dungeongen map units (grid units * CELL_SIZE),
     ignoring padding - i.e. how close a render of it would come to the crash limit.
@@ -1135,21 +1183,23 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
         if shift_x or shift_y:
             island = _translated_island(island, -shift_x, -shift_y)
             dg_dungeon = build_dungeongen_dungeon(island)
-    dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
-    _quieten_stair_alcoves(dg_map, dg_dungeon)
-    bounds = dg_map.bounds
-    pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells, dg_map.options.map_border_cells)
-    width = max(1, round(bounds.width + 2 * pad_x))
-    height = max(1, round(bounds.height + 2 * pad_y))
+    with _region_inflation():
+        dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
+        _quieten_stair_alcoves(dg_map, dg_dungeon)
+        bounds = dg_map.bounds
+        pad_x, pad_y = grid_to_map(
+            dg_map.options.map_border_cells, dg_map.options.map_border_cells)
+        width = max(1, round(bounds.width + 2 * pad_x))
+        height = max(1, round(bounds.height + 2 * pad_y))
 
-    fd, path = tempfile.mkstemp(suffix=".svg")
-    os.close(fd)
-    try:
-        dg_map.render_to_svg(path, width=width, height=height)
-        with open(path, "r", encoding="utf-8") as fh:
-            svg = fh.read()
-    finally:
-        os.unlink(path)
+        fd, path = tempfile.mkstemp(suffix=".svg")
+        os.close(fd)
+        try:
+            dg_map.render_to_svg(path, width=width, height=height)
+            with open(path, "r", encoding="utf-8") as fh:
+                svg = fh.read()
+        finally:
+            os.unlink(path)
     px_per_grid_unit = SCALE * CELL_SIZE
     dg_min_x, dg_min_y, _, _ = dg_dungeon.bounds  # the very shift the adapter applied
     # ...plus whatever we normalized away above, which the adapter then saw as

@@ -1041,3 +1041,71 @@ def test_the_alcove_has_no_corner_decoration():
                         ordinary += 1
     assert alcoves > 30, f"expected plenty of alcoves, found {alcoves}"
     assert ordinary > 30, f"expected plenty of ordinary rooms, found {ordinary}"
+
+
+def test_without_region_inflation_a_probe_past_a_wall_means_something():
+    """With the inflation off, an alcove reaches past exactly one of its walls.
+
+    This is the test that could not be written before. dungeongen inflates
+    every region by `REGION_INFLATE` (1.6px) before drawing, so asking whether
+    a region reaches past a given wall answered yes on all four sides of every
+    alcove - 42 of 43 over eight seeds - and an earlier test built on that
+    probe ended up measuring how far the doorway chip protruded instead.
+
+    `_region_inflation` turns it off for the render, and with it off the
+    question is meaningful again: the region ends at its walls, except where
+    the doorway bridges one.
+
+    Also checks the constant is put back. It is a module global in someone
+    else's library, and it has to stay swapped for the whole render because
+    `_make_regions` runs inside `Map.render` - patching around the conversion
+    alone does nothing, which is how this setting first looked inert."""
+    import dungeongen.map.map as dg_map_module
+    from dungeongen.constants import CELL_SIZE
+
+    before = dg_map_module.REGION_INFLATE
+    one_side = other = 0
+    for seed in range(8):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["stairs"] or not bridge.fits_size_limit(island):
+                    continue
+                with bridge._region_inflation():
+                    assert dg_map_module.REGION_INFLATE == 0.0, (
+                        "the override is not in effect during the render"
+                    )
+                    built = bridge.build_dungeongen_dungeon(island)
+                    try:
+                        dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                    except Exception:
+                        continue
+                    bridge._quieten_stair_alcoves(dg_map, built)
+                    off_x = -built.bounds[0] if built.rooms else 0
+                    off_y = -built.bounds[1] if built.rooms else 0
+                    regions = dg_map._make_regions()
+                    for stair in built.stairs.values():
+                        gx, gy = stair.x + off_x, stair.y + off_y
+                        cx = gx * CELL_SIZE + CELL_SIZE / 2
+                        cy = gy * CELL_SIZE + CELL_SIZE / 2
+                        mine = [r for r in regions if r.shape.contains(cx, cy)]
+                        if not mine:
+                            continue
+                        shape = mine[0].shape
+                        step = CELL_SIZE * 0.55
+                        past = sum(
+                            1 for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0))
+                            if shape.contains(cx + dx * step, cy + dy * step)
+                        )
+                        if past == 1:
+                            one_side += 1
+                        else:
+                            other += 1
+        assert dg_map_module.REGION_INFLATE == before, (
+            "the inflation was left swapped after the render"
+        )
+    assert one_side > 30, f"expected plenty of alcoves, found {one_side}"
+    assert other <= one_side * 0.25, (
+        f"{other} of {one_side + other} alcoves reach past something other than "
+        f"their one doorway; with the inflation off that should be rare"
+    )
