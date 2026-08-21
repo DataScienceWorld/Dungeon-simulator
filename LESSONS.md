@@ -29,6 +29,10 @@ measurement that was quietly answering a different question.
   changed, with the same file size and mtime to the second.
 - **Say what a number counts.** "15% open" and "0.14 cells of ink past the
   corner" are different measurements of the same edge and disagree happily.
+- **Ask the pixels what is drawn.** Region geometry cannot see paint: the
+  alcove doorway is filled over the wall at `Layers.OVERLAY`, so every shape
+  in the map still says that side is walled. `_alcove_edge_ink` renders and
+  scans the four cell edges instead.
 
 ### Don't
 
@@ -103,7 +107,19 @@ The single most productive source of off-by-one bugs in this codebase.
   `room_shadow_offset` moves the measurement not at all. It was the region
   inflation.
 
+- **Don't expect two regions that touch to share one outline.** `Map.render`
+  collects every region's path into one `unified_border` and strokes it, with
+  no union: two outlines running along the same grid line are stroked twice,
+  and anything one region owns past the line is stroked over the other's
+  floor. That is where the box beside the stairs alcove came from.
+
 ### Worth knowing
+
+Drawing order in `Map.render`, which is what makes a painted opening possible:
+crosshatch, then per-region fills, shadows, grid and props (each clipped to
+its region), then the unified border stroke, and only then `Layers.OVERLAY`
+and `Layers.TEXT` over every element. Anything filled at OVERLAY covers the
+wall.
 
 `REGION_INFLATE` (dungeongen's `CELL_SIZE * 0.025` = 1.6px) inflates *every*
 region before drawing. Two regions side by side are each inflated towards the
@@ -158,6 +174,16 @@ both 6.0px, both centred exactly on the grid line.
 
 ### Worth knowing
 
+- **There is no such thing as a gap between two regions.** Whatever either one
+  owns past the shared line is outlined too, so a chip cannot cut a hole - it
+  can only add a bump. Measured over 30 seeds: all 138 stairs alcoves were
+  walled on all four sides, doorway included. An opening therefore comes from
+  one of exactly two things: the two floors being in the *same* region, or
+  paint laid over the wall afterwards.
+- **A closed door's own glyph is paint of the second kind.** `Door.draw` fills
+  its leaf in `room_color` at `Layers.OVERLAY`, after the border is stroked,
+  and then strokes the leaf. Fill without that stroke and the result is a
+  clean hole in the wall - which is how the alcove doorway is drawn.
 - An **open** door is traversed by `Map._trace_connected_region`, so the two
   rooms become one region and the wall between them is erased. A **closed**
   door and an **`Exit`** are terminal: they contribute their chip and stop.
@@ -203,6 +229,12 @@ both 6.0px, both centred exactly on the grid line.
   own runs the full width with the widest tread *on* the boundary plus an
   overhang - right in a passage, but in the alcove that boundary is the
   doorway, and the tread closed it.
+- **Paint the doorway, don't build it.** A rectangle in `room_color` across
+  the wall at `Layers.OVERLAY`, one `border_width` deep either side of the
+  line and stopping one short of each corner (the border's round join reaches
+  a half-thickness along the neighbouring wall, and painting over that eats
+  the corner). 112 of 112 alcoves over 20 seeds then render as a square with
+  one clear side, and it is the side the door faces.
 
 ### Don't
 
@@ -213,6 +245,16 @@ both 6.0px, both centred exactly on the grid line.
 - **Don't identify an alcove by size.** Ordinary rooms come out 1x1 too, and
   they were having their decoration stripped. By position, against the stair
   cells the dungeon was built from (`_alcove_cell_of`).
+- **Don't hand the alcove door a chip.** dungeongen's own goes in as two
+  halves, one per region, and both sit inside the alcove cell because the door
+  is on the cell rather than on one of its own - so the corridor's outline
+  pokes into the alcove. Ours went in whole to *both* sides, and each region
+  outlined all of it: that small box sticking into the corridor, which read as
+  a closed door for weeks. `get_side_shape` now returns an empty group.
+- **Don't open the door to get rid of the walls.** It works, and it takes too
+  many: 77 of 138 alcoves kept their three walls, 21 kept four, 29 dropped to
+  two, and one lost all of them - the alcove merges with everything its
+  approach passage touches.
 
 ---
 

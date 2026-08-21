@@ -180,7 +180,9 @@ One good thing fell out: with the inflation off, asking whether a region
 reaches past a given wall means something again. At 1.6 the answer was yes on
 all four sides of every alcove (42 of 43 over eight seeds), which is how an
 earlier test came to measure the doorway's protrusion while believing it
-measured the doorway.
+measured the doorway. The answer is now a clean no on all four -
+`test_without_region_inflation_an_alcove_measures_like_a_closed_square` - with
+the way in painted over the wall afterwards.
 
 ## 4c. Stairs get an alcove of their own
 
@@ -189,8 +191,9 @@ what gives them walls. dungeongen draws a wall only along the outline of a
 region, so two touching floor cells inside one region have nothing to draw
 between them: as a passage, a stairs cell running alongside another corridor
 (32% of them - 60 of 185 over 40 seeds) had no wall on that flank at all. A
-room draws its own outline whatever region it sits in, which is where the
-three walls come from.
+room is not merged into its neighbours' region, so its own outline is drawn
+all the way round, and that is where the walls come from - `Room.draw` itself
+only marks the corners.
 
 Seed 72's stairs 23, longest ink-free run per edge, steps stripped so that
 only wall counts:
@@ -198,26 +201,32 @@ only wall counts:
 | | N | S | E | W |
 |---|---|---|---|---|
 | as a passage | 15% open | 0 | 14% | 0 |
-| as an alcove | **0 - solid** | 0 | **15% - the way in** | 0 |
+| as an alcove | **0 - solid** | 0 | 0 | 0 |
 
-The way in is the same three pieces dungeongen uses for any room off a
-corridor, and **all three are needed together**: the room, a `Passage` that
-*ends* in it, and a **closed** `Door` between them carrying that passage's id.
+Solid on all four, which is what a room off a corridor should be before its
+doorway is cut. The three pieces dungeongen uses for any such room are all
+still needed together - the room, a `Passage` that *ends* in it, and a
+**closed** `Door` between them carrying that passage's id - but they are what
+keeps the alcove separate, not what opens it. The way in is painted over the
+wall afterwards; see below.
 
 That took several wrong turns worth recording, because each failed silently:
 
-- a chip on its own opens nothing. An `Exit`, or a door with no passage
-  terminating at it, leaves the alcove **sealed on all four sides** - 0%
-  opening on every edge. A chip is made to sit in a wall two floors already
-  reach; it does not cut one by itself.
+- no chip opens anything, ours or dungeongen's. It took far too long to see
+  why: two regions that meet on a grid line are *both* outlined along it, so a
+  chip can only add a bump on one side, never cut a hole. An `Exit`, or a door
+  with no passage terminating at it, leaves the alcove sealed - and so does a
+  door that has one.
 - hiding the glyph does not help either, and for the same reason: what reads
   as an opening is the glyph, so an `Exit` with its archway suppressed is just
   a sealed box. (That version was committed and reverted - `4526914`,
   `9946cc3`.)
-- the door must face **into** the alcove, away from the corridor. The other
-  way round measures 0% on all four edges, exactly like no door at all.
+- the door must still face **into** the alcove, away from the corridor: that
+  is the side `_quieten_stair_alcoves` reads to know which wall to paint
+  through.
 - an **open** door would merge the regions and take the walls with it, the
-  same reason a secret door goes over closed.
+  same reason a secret door goes over closed. Measured: 77 of 138 alcoves keep
+  three walls, 21 keep four, 29 drop to two, one loses all of them.
 
 Two measurements misled me for a while and are worth not repeating: the
 staircase's own widest step line sits **on the cell edge**, so a pixel scan
@@ -241,26 +250,45 @@ Identifying an alcove by size ("the only room one cell across") was wrong -
 real rooms come out 1x1 too. It is done by position now, against the stair
 cells the dungeon was built from.
 
-The door is not drawn. It has to *exist* - that is what keeps the alcove its
-own region - but no die rolled it, and dungeongen puts its leaf in the middle
-of the cell, on top of the staircase: seed 72's stairs 23 show two steps with
-it on and three with it off. Silencing it costs nothing, and that is the part
-worth knowing: the opening is the door's chip meeting the passage that ends
-there, and the region paints that itself, so the edges measure the same either
-way (N/S/W solid, E open at 15%). That separation only holds in this
-arrangement - a chip with no passage terminating at it opens nothing, glyph or
-no glyph, which is what the sealed version shipped.
+The door is not drawn as a door. It has to *exist*, and closed, because that
+is what keeps the alcove its own region - but no die rolled it, and dungeongen
+puts its leaf in the middle of the cell, on top of the staircase: seed 72's
+stairs 23 show two steps with it on and three with it off.
 
-Its chip is not dungeongen's either, and for a separate reason. The chip is
-not decoration - it *is* the opening, the floor that bridges the wall - but
-dungeongen's is a rounded lobe a third of a cell across, drawn to sit
-half-hidden inside a room of ordinary size. In one cell there is nowhere for
-it to hide: it bulges into the middle of the floor and reads as a pear stuck
-to the doorway. Moving the door out to the boundary cell hides the lobe but
-**seals** the alcove, so the shape had to change, not the position. It is a
-plain rectangle straddling the wall now. Alcoves with exactly one side open,
-over 20 seeds: **13 -> 110**, none sealed; six open on more than one side,
-where the cell abuts something that reaches into it.
+**The opening is painted, not built, and everything written here before about
+a floor chip opening it was wrong.** Two regions that meet on a grid line
+always get a wall there: `Map.render` throws every region's outline into one
+`unified_border` path and strokes it without unioning, so whatever either side
+owns past the line is simply stroked over the other's floor. A chip cannot cut
+a hole, only add a bump. Measured on 30 seeds, all 138 alcoves were walled on
+all four sides - the "opening" was the outline of our own rectangle sticking
+into the corridor, which is exactly what read as a small closed door.
+
+What does work is what dungeongen's own glyph does. `Door.draw` runs at
+`Layers.OVERLAY`, after the border has been stroked, and fills its leaf in
+`room_color` straight over the wall before stroking it. Fill without that
+stroke and what is left is a hole and nothing else. The alcove's doorway is a
+rectangle across the wall, one `border_width` deep either side of the line
+(the stroke is centred on it, and the drop shadow goes the same way) and
+stopping one thickness short of each corner, because the border's round join
+reaches a half-thickness along the neighbouring wall and painting over it eats
+the corner.
+
+Over 20 seeds, **112 of 112** alcoves now render as a square with exactly one
+clear side, and that side the one its door faces. With the chip it was 0 of
+112: the doorway side came out between a third and two thirds inked, once
+fully. `test_the_alcove_is_a_square_with_one_opening_and_nothing_in_it` scans
+the rendered pixels along the four cell edges, because no region shape can see
+paint.
+
+The chip is gone entirely - `get_side_shape` returns an empty group.
+dungeongen's own would go in as two halves, one per region, and both sit
+*inside* the alcove cell, because our door is on the cell rather than on one
+of its own; the corridor's outline would then poke into the alcove.
+
+Opening the door instead was measured and rejected: it merges the alcove with
+everything its approach passage touches, leaving 77 of 138 alcoves with the
+three walls they should have, 21 with four, 29 with two and one with none.
 
 The staircase is drawn smaller than dungeongen draws it, at
 `_ALCOVE_STAIR_SCALE` of the cell. Its own six treads run the full width with
@@ -292,38 +320,28 @@ walls and the staircase still draw.
     x=21.30 before:  14.927..15.072, 15.121..15.154   wall + bracket
     x=21.30 after:   14.927..15.072                   wall alone
 
-### The doorway reaches one wall thickness past the wall
+### Settled: the doorway no longer reaches past anything
 
-The chip that opens the alcove reaches one `border_width` past the wall, and
-that is the floor rather than a value left untuned: squaring it off *at* the
-line, or at half a thickness, makes the alcove measure **shut on all four
-sides**, because a region has to clear its own wall stroke before it reads as
-open. `test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness`
-pins both ends, failing at a deeper chip and at a flush one.
+This section used to argue for a chip that overshot the wall by exactly one
+`border_width`, and pinned it with a test. Both are gone: there is no chip.
+See above - the opening is paint, and paint has no outline.
 
-**It does not lengthen the alcove's north wall, and an earlier version of this
-note said it did.** The chip runs east only and is centred on the wall it
-crosses (the middle 60%), so it never reaches the corner. Zeroing it leaves
-seed 72's alcove for stairs #23 measuring exactly the same along its north
-wall - ink to x=22.14 either way, against x=21.14 with no alcove at all. What
-sticks out at that corner is the corner join of the alcove's own outline.
+Two things from it are still worth keeping.
 
-Whether a one-cell room's corner join is heavier than an ordinary room's is
-**not** established. Two attempts to measure it were contaminated and should
-not be repeated in the same form: scanning the alcove's south wall for
+**The alcove's north wall was never lengthened by the doorway**, though an
+earlier note said so. Zeroing the chip left seed 72's alcove for stairs #23
+measuring exactly the same along its north wall - ink to x=22.14 either way,
+against x=21.14 with no alcove at all. What sticks out at that corner is the
+corner join of the alcove's own outline.
+
+**Whether a one-cell room's corner join is heavier than an ordinary room's is
+still not established.** Two attempts to measure it were contaminated and
+should not be repeated in the same form: scanning the alcove's south wall for
 comparison picks up the corridor in (22,16) and the surrounding rock rather
 than the alcove, and diffing a render against one with the stairs removed
 changes dungeongen's decorative RNG, so the difference covers the whole
 window. An isolated comparison - the same corner on a 1x1 and on a larger
 room, both clear of other geometry - is the way to settle it.
-
-Getting rid of the overshoot entirely means the corridor's region supplying
-the outer half, the way dungeongen's own door splits `_left_group` /
-`_right_group` between the two sides; handing our chip out whole is what makes
-the alcove own both halves. The obstacle is that those halves meet at the
-door's centre, and on the alcove's cell that centre is half a cell inside the
-wall. Putting the door on the corridor cell instead - where dungeongen puts it
-for every ordinary room - has been measured three times and comes out sealed.
 
 **`_grid_cell_path` returns waypoints, not cells.** A corridor from (20,14)
 to (23,14) comes back as `[(20,14), (22,14)]` - the corners - and the cells
@@ -333,15 +351,15 @@ got reported as bare rock twice when corridor 8 and the link from room 1 to
 room 28 both run through it. Expand the runs before asking what occupies a
 cell.
 
-**A warning about measuring any of this.** `_make_regions` inflates every
-shape by `REGION_INFLATE` (CELL_SIZE * 0.025) before drawing, so probing a
-region for "is this side open" says yes on all four sides of every alcove - 42
-of 43 over eight seeds. A probe further out stops saying yes only where the
-chip protrudes, which reads like an opening test and is really a protrusion
-test: an earlier version of the test above was written that way and duly
-failed a flusher chip as a regression. Measure the rectangle handed over, or
-scan the rendered wall line - and check what else lies along that line before
-believing it.
+**A warning about measuring any of this.** Region geometry answers a different
+question from the picture. `_make_regions` used to inflate every shape by
+`REGION_INFLATE`, so probing "is this side open" said yes on all four sides of
+every alcove (42 of 43 over eight seeds); with the inflation off it now says
+*no* on all four, correctly, because the doorway is paint the shapes know
+nothing about. Scan the rendered wall line for anything about what is drawn -
+and strip the props first, since `StairsProp` puts its widest tread on the
+cell boundary, and strip them *after* `_quieten_stair_alcoves`, which puts a
+missing staircase back.
 
 ## 4d. Stairs walled off from their own trunk (superseded, re-measure)
 

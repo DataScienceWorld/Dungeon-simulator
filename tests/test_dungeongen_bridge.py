@@ -809,20 +809,20 @@ def test_stairs_get_an_alcove_of_their_own_with_the_steps_in_it():
 
 
 def test_the_alcove_door_is_not_drawn_but_still_opens_the_wall():
-    """The door has to exist and must not be seen.
+    """The door has to exist, and no leaf of dungeongen's may be drawn.
 
     It has to exist because it is what keeps the alcove its own region, and
-    so its three walls. It must not be seen because no die rolled a door
-    there, and because dungeongen draws its leaf in the *middle* of the cell,
+    so its four walls. Its own drawing must go because no die rolled a door
+    there, and because dungeongen draws the leaf in the *middle* of the cell,
     squarely over the staircase - seed 72's stairs 23 show two steps with it
     on and three with it off.
 
-    The two are separable here, and that is the whole point: the opening is
-    not the glyph, it is the door's floor chip meeting the passage that ends
-    at it, and the region paints that itself. Which is exactly what is *not*
-    true of a chip with no passage terminating there - that one opens nothing
-    whether its glyph is drawn or not, which is how an earlier attempt shipped
-    an alcove sealed on all four sides."""
+    What replaces it is not nothing: `_quieten_stair_alcoves` puts its own
+    `draw` on the instance, which paints the doorway over the wall at
+    `Layers.OVERLAY` - see
+    `test_the_alcove_is_a_square_with_one_opening_and_nothing_in_it`. This
+    test only pins down that alcove doors get a `draw` of their own and that
+    ordinary doors keep dungeongen's."""
     from dungeongen.constants import CELL_SIZE
     from dungeongen.map.door import Door as _MapDoor
 
@@ -925,73 +925,122 @@ def test_the_alcove_staircase_stays_clear_of_the_cell_edges():
     )
 
 
-def test_the_alcove_doorway_overshoots_the_wall_by_exactly_one_thickness():
-    """How far the doorway chip may reach past the wall, and why that number.
+def _alcove_edge_ink(island):
+    """Ink along each alcove's four cell edges, read off the render.
 
-    The alcove and the corridor are separate regions, so each outlines what it
-    owns and whatever of the chip lies beyond the wall gets an outline of its
-    own - visible as the alcove's north wall running on into the corridor.
-    Squaring the chip off at the line would end that, and it was tried: the
-    alcove then measures **shut on all four sides**, because a region has to
-    clear its own wall stroke before it reads as open. At half a thickness,
-    the same. One `border_width` is the least that opens it.
+    A wall is what is actually drawn, so this asks the pixels rather than the
+    geometry - the doorway is painted over the wall at `Layers.OVERLAY`, which
+    no region shape knows anything about.
 
-    So this pins both ends. Any less and the way in disappears; any more and
-    the wall visibly overshoots - seed 72's stairs 23 reached 0.14 of a cell
-    past its corner when the chip was a tuned 0.22, against 0.07 for its own
-    south wall, which has no doorway.
+    Props go first. `StairsProp` draws its widest tread *on* the cell
+    boundary, and a scan counts that as wall; and they have to go *after*
+    `_quieten_stair_alcoves`, which puts a missing staircase back.
 
-    Asserted on the rectangle we hand over, not on the render: dungeongen's
-    region shapes are inflated by `REGION_INFLATE` before anything is drawn,
-    so probing them says every side of every alcove is open - which is how an
-    earlier test came to reward the overshoot it was meant to catch."""
+    Returns {(cell): {"N": inked fraction, ...}} in the map's own cell
+    coordinates."""
+    import numpy as np
+    import skia
     from dungeongen.constants import CELL_SIZE
-    from dungeongen.map.door import Door as _MapDoor
+    from dungeongen.graphics.conversions import grid_to_map
 
+    built = bridge.build_dungeongen_dungeon(island)
+    with bridge._region_inflation():
+        dg_map = bridge._convert_dungeon(built, show_numbers=False)
+        bridge._quieten_stair_alcoves(dg_map, built)
+        for element in dg_map._elements:
+            for prop in list(getattr(element, "props", [])):
+                element.remove_prop(prop)
+        bounds = dg_map.bounds
+        pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells,
+                                   dg_map.options.map_border_cells)
+        width = max(1, round(bounds.width + 2 * pad_x))
+        height = max(1, round(bounds.height + 2 * pad_y))
+        surface = skia.Surface(width, height)
+        dg_map.render(surface.getCanvas())
+        pixels = surface.makeImageSnapshot().toarray()
+
+    grey = pixels[:, :, :3].mean(axis=2)
+    ox, oy = pad_x - bounds.x, pad_y - bounds.y
+    off_x = -built.bounds[0] if built.rooms else 0
+    off_y = -built.bounds[1] if built.rooms else 0
+    inset = CELL_SIZE * 0.2  # clear of both corners, where the walls meet
+    out = {}
+    for stair in built.stairs.values():
+        gx, gy = stair.x + off_x, stair.y + off_y
+        edges = {}
+        for side, (dx, dy) in (("N", (0, -1)), ("S", (0, 1)),
+                               ("W", (-1, 0)), ("E", (1, 0))):
+            if dx:
+                x = ox + (gx + (1 if dx > 0 else 0)) * CELL_SIZE
+                run = [(x, y) for y in np.arange(oy + gy * CELL_SIZE + inset,
+                                                 oy + (gy + 1) * CELL_SIZE - inset)]
+            else:
+                y = oy + (gy + (1 if dy > 0 else 0)) * CELL_SIZE
+                run = [(x, y) for x in np.arange(ox + gx * CELL_SIZE + inset,
+                                                 ox + (gx + 1) * CELL_SIZE - inset)]
+            dark = sum(1 for x, y in run
+                       if 0 <= int(y) < height and 0 <= int(x) < width
+                       and grey[int(y), int(x)] < 128)
+            edges[side] = dark / len(run)
+        out[(gx, gy)] = edges
+    return out
+
+
+def test_the_alcove_is_a_square_with_one_opening_and_nothing_in_it():
+    """Three walls, one gap, and no door drawn anywhere near it.
+
+    Measured on the pixels, because that is where the answer is. Two regions
+    that meet on a grid line always get a wall between them, and no floor chip
+    changes that - whatever either region owns past the line is simply
+    outlined too. Before this, all 138 alcoves over 30 seeds were sealed on
+    all four sides in region terms, and the only thing that read as a doorway
+    was the outline of the chip we handed over, sticking out into the corridor
+    like a little closed door.
+
+    So the gap is painted rather than built, the way dungeongen's own door
+    glyph is: `Door.draw` runs at `Layers.OVERLAY`, after `Map.render` has
+    stroked the border, and fills in `room_color` straight over it. Ours fills
+    and does not stroke.
+
+    Over 20 seeds this ran to 112 alcoves, every one of them a square with one
+    clear side, and that side the one its door faces. Against the chip it was
+    0 of 112 - the doorway side came out between a third and two thirds inked,
+    once fully."""
+    away = {"north": "S", "south": "N", "east": "W", "west": "E"}
     checked = 0
-    for seed in range(10):
+    for seed in range(20):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         for islands in compute_layout(dungeon).values():
             for island in islands:
                 if not island["stairs"] or not bridge.fits_size_limit(island):
                     continue
                 built = bridge.build_dungeongen_dungeon(island)
-                try:
-                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
-                except Exception:
-                    continue
-                bridge._quieten_stair_alcoves(dg_map, built)
-                thickness = dg_map.options.border_width
                 off_x = -built.bounds[0] if built.rooms else 0
                 off_y = -built.bounds[1] if built.rooms else 0
-                alcoves = {(s.x + off_x, s.y + off_y) for s in built.stairs.values()}
-                for element in dg_map._elements:
-                    if not isinstance(element, _MapDoor):
+                facing = {(door.x + off_x, door.y + off_y): away[door.direction]
+                          for door in built.doors.values()}
+                alcoves = {(room.x + off_x, room.y + off_y)
+                           for room in built.rooms.values()
+                           if room.id.startswith("stair")}
+                for cell, edges in _alcove_edge_ink(island).items():
+                    # a stair whose cell fell inside a room has no alcove at
+                    # all, and nothing here to say about it
+                    if cell not in alcoves or cell not in facing:
                         continue
-                    cell = (round(element._x / CELL_SIZE),
-                            round(element._y / CELL_SIZE))
-                    if cell not in alcoves:
-                        continue
-                    chip = element.get_side_shape(None).bounds
-                    # the cell the alcove occupies, in map units
-                    left, top = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
-                    right, bottom = left + CELL_SIZE, top + CELL_SIZE
-                    over = max(
-                        chip.x + chip.width - right, left - chip.x,
-                        chip.y + chip.height - bottom, top - chip.y,
+                    clear = sorted(s for s, v in edges.items() if v < 0.1)
+                    walled = sorted(s for s, v in edges.items() if v > 0.9)
+                    shown = {k: round(v, 2) for k, v in edges.items()}
+                    assert clear == [facing[cell]], (
+                        f"seed {seed}: the alcove at {cell} should open only to "
+                        f"{facing[cell]}, the side its door faces, and opens "
+                        f"{clear or 'nowhere'} instead: {shown}"
                     )
-                    assert over <= thickness + 0.01, (
-                        f"seed {seed}: the doorway at {cell} reaches {over:.1f} past "
-                        f"the wall, more than the {thickness:.1f} it is thick; that "
-                        f"much shows as the alcove's wall running into the corridor"
-                    )
-                    assert over >= thickness - 0.01, (
-                        f"seed {seed}: the doorway at {cell} reaches only {over:.1f} "
-                        f"past the wall; under one thickness ({thickness:.1f}) the "
-                        f"alcove measures sealed on every side"
+                    assert len(walled) == 3, (
+                        f"seed {seed}: the alcove at {cell} has {len(walled)} solid "
+                        f"walls, not three: {shown}"
                     )
                     checked += 1
-    assert checked > 40, f"expected plenty of alcove doorways, found {checked}"
+    assert checked > 40, f"expected plenty of alcoves, found {checked}"
 
 
 def test_the_alcove_has_no_corner_decoration():
@@ -1043,18 +1092,19 @@ def test_the_alcove_has_no_corner_decoration():
     assert ordinary > 30, f"expected plenty of ordinary rooms, found {ordinary}"
 
 
-def test_without_region_inflation_a_probe_past_a_wall_means_something():
-    """With the inflation off, an alcove reaches past exactly one of its walls.
+def test_without_region_inflation_an_alcove_measures_like_a_closed_square():
+    """With the inflation off, asking a region where it ends means something.
 
-    This is the test that could not be written before. dungeongen inflates
-    every region by `REGION_INFLATE` (1.6px) before drawing, so asking whether
-    a region reaches past a given wall answered yes on all four sides of every
-    alcove - 42 of 43 over eight seeds - and an earlier test built on that
-    probe ended up measuring how far the doorway chip protruded instead.
+    dungeongen inflates every region by `REGION_INFLATE` (1.6px) before
+    drawing, so "does this region reach past that wall" answered yes on all
+    four sides of every alcove - 42 of 43 over eight seeds. `_region_inflation`
+    turns it off, and with it off the answer is the true one: an alcove is its
+    own region and ends at all four of its walls. The way in is not a gap in
+    the region, it is paint laid over the wall afterwards - see
+    `test_the_alcove_is_a_square_with_one_opening_and_nothing_in_it`.
 
-    `_region_inflation` turns it off for the render, and with it off the
-    question is meaningful again: the region ends at its walls, except where
-    the doorway bridges one.
+    So this fails in both directions: with the inflation left on, every side
+    reads open.
 
     Also checks the constant is put back. It is a module global in someone
     else's library, and it has to stay swapped for the whole render because
@@ -1062,9 +1112,10 @@ def test_without_region_inflation_a_probe_past_a_wall_means_something():
     alone does nothing, which is how this setting first looked inert."""
     import dungeongen.map.map as dg_map_module
     from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.room import Room as _MapRoom
 
     before = dg_map_module.REGION_INFLATE
-    one_side = other = 0
+    checked = 0
     for seed in range(8):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         for islands in compute_layout(dungeon).values():
@@ -1083,29 +1134,41 @@ def test_without_region_inflation_a_probe_past_a_wall_means_something():
                     bridge._quieten_stair_alcoves(dg_map, built)
                     off_x = -built.bounds[0] if built.rooms else 0
                     off_y = -built.bounds[1] if built.rooms else 0
-                    regions = dg_map._make_regions()
-                    for stair in built.stairs.values():
-                        gx, gy = stair.x + off_x, stair.y + off_y
-                        cx = gx * CELL_SIZE + CELL_SIZE / 2
-                        cy = gy * CELL_SIZE + CELL_SIZE / 2
-                        mine = [r for r in regions if r.shape.contains(cx, cy)]
-                        if not mine:
+                    alcoves = {(room.x + off_x, room.y + off_y)
+                               for room in built.rooms.values()
+                               if room.id.startswith("stair")}
+                    # By the alcove's own Room element, not by "the first
+                    # region containing this point": the passage that ends
+                    # there covers the same cell, and its region gets picked
+                    # about half the time.
+                    holder = {}
+                    for region in dg_map._make_regions():
+                        for element in region.elements:
+                            holder[id(element)] = region
+                    for element in dg_map._elements:
+                        if not isinstance(element, _MapRoom):
                             continue
-                        shape = mine[0].shape
+                        eb = element.shape.bounds
+                        cell = (round(eb.x / CELL_SIZE), round(eb.y / CELL_SIZE))
+                        if cell not in alcoves or id(element) not in holder:
+                            continue
+                        cx = (cell[0] + 0.5) * CELL_SIZE
+                        cy = (cell[1] + 0.5) * CELL_SIZE
+                        shape = holder[id(element)].shape
                         step = CELL_SIZE * 0.55
-                        past = sum(
-                            1 for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0))
+                        past = sorted(
+                            name for name, (dx, dy) in
+                            (("N", (0, -1)), ("S", (0, 1)),
+                             ("W", (-1, 0)), ("E", (1, 0)))
                             if shape.contains(cx + dx * step, cy + dy * step)
                         )
-                        if past == 1:
-                            one_side += 1
-                        else:
-                            other += 1
+                        assert not past, (
+                            f"seed {seed}: the alcove at {cell} reaches past its "
+                            f"{', '.join(past)} wall; with the inflation off it "
+                            f"should end at all four"
+                        )
+                        checked += 1
         assert dg_map_module.REGION_INFLATE == before, (
             "the inflation was left swapped after the render"
         )
-    assert one_side > 30, f"expected plenty of alcoves, found {one_side}"
-    assert other <= one_side * 0.25, (
-        f"{other} of {one_side + other} alcoves reach past something other than "
-        f"their one doorway; with the inflation off that should be rare"
-    )
+    assert checked > 20, f"expected plenty of alcoves, found {checked}"

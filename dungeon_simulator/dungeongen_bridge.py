@@ -735,16 +735,24 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         # passage that *ends* in it, and a door on the wall between them,
         # tied to that passage by `passage_id`.
         #
-        # All three are needed together, and getting there took several wrong
-        # turns worth recording. A chip on its own (an Exit, or a door with no
-        # passage terminating at it) does not open anything - it is meant to
-        # sit in a wall two floors already reach. And leaving the cell a plain
-        # passage keeps it in the same region as whatever it touches, so the
-        # flank wall never gets drawn. A Room draws its own outline whatever
-        # region it is in, which is what supplies the other three walls.
+        # What each piece is for. The Room is the floor of the one cell, and
+        # being a Room rather than a stretch of passage is what keeps it out
+        # of its neighbours' region: a plain passage cell joins whatever it
+        # touches, and then no flank wall is drawn at all. The walls
+        # themselves are the outline of that region - `Room.draw` only marks
+        # the corners, there is no wall object anywhere in dungeongen.
         #
-        # The door is CLOSED: an open one merges the regions and takes the
-        # wall with it (same reason a secret door goes over closed).
+        # The door is CLOSED, and it is CLOSED for the region, not for the
+        # picture: an open one is traversed by `Map._trace_connected_region`,
+        # which merges the alcove into the corridor and takes every wall they
+        # share with it. Measured over 30 seeds, opening it left only 77 of
+        # 138 alcoves with the three walls they should have, 21 with four and
+        # one with none. It is the passage that has to end here for the door
+        # to mean anything - `passage_id` below.
+        #
+        # None of this draws the way in. Two regions that meet on a grid line
+        # always get a wall there; the opening is painted over it afterwards,
+        # in `_quieten_stair_alcoves`.
         take = island.get("_takeoff", {}).get(f"stairs{stair['id']}")
         if room_id is not None and take is not None:
             towards = ("E" if take[0] > cell[0] else
@@ -880,6 +888,8 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     from dungeongen.graphics.shapes import Rectangle as _Rectangle, ShapeGroup as _ShapeGroup
     from dungeongen.map.props import StairsProp as _StairsProp
     from dungeongen.graphics.rotation import Rotation as _Rotation
+    from dungeongen.map.enums import Layers as _Layers
+    import skia as _skia
     from dungeongen.constants import CELL_SIZE
 
     # Same mapping `_convert_stair` uses: the steps are oriented by the way
@@ -936,20 +946,15 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
             cell[0], cell[1],
             rotations.get(stair_at[cell].direction, _Rotation.ROT_0)))
 
-    # The door that opens the alcove is not drawn. It has to *exist* - closed,
-    # tied to the passage that ends there - because that is what keeps the
-    # alcove its own region and so its three walls. But no die ever rolled a
-    # door here, and dungeongen draws its leaf in the middle of the cell,
-    # squarely on top of the staircase: with it on, seed 72's stairs 23 show
-    # two steps, with it off, three.
+    # The alcove's door is never drawn as a door. It has to *exist*, and
+    # closed, because that is what keeps the alcove its own region and so its
+    # four walls - but no die ever rolled a door here, and dungeongen draws
+    # the leaf in the middle of the cell, squarely on top of the staircase:
+    # with it on, seed 72's stairs 23 show two steps, with it off, three.
     #
-    # Silencing it costs nothing, which is the part worth knowing. The opening
-    # is not the glyph - it is the door's floor chip meeting the passage that
-    # terminates there, and the region draws that itself
-    # (`region.shape.draw`, independent of any element's own draw). Measured
-    # on the same cell either way: north, south and west solid, east open at
-    # 15%. That is only true in this arrangement; a chip with no passage
-    # ending at it opens nothing at all, glyph or no glyph.
+    # What takes its place is the doorway itself, painted over the wall in the
+    # same pass. Below.
+    #
     # Which wall each alcove opens through, taken from the door we made for
     # it (it faces *into* the alcove, so the opening is the other way).
     opening = {}
@@ -965,50 +970,64 @@ def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
         cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
         if cell not in alcoves:
             continue
-        element.draw = lambda *args, **kwargs: None
         side = opening.get(cell)
+        # No chip at all. dungeongen's own would go in as two halves, one into
+        # each region, and both of them sit *inside* the alcove cell because
+        # our door is on the cell rather than on a cell of its own - so the
+        # corridor's outline pokes into the alcove. Ours went in whole to both
+        # sides instead, and each region then outlined the whole of it: that
+        # small box sticking out into the corridor, which read as a closed
+        # door. Neither is wanted.
+        element.get_side_shape = lambda connected: _ShapeGroup(includes=[], excludes=[])
         if side is None:
+            element.draw = lambda *args, **kwargs: None
             continue
-        # And a plain rectangular gap in place of dungeongen's own chip.
+        # The way in is painted, not built.
         #
-        # The chip is not decoration - it *is* the opening, the piece of floor
-        # that bridges the wall - but its shape is a rounded lobe a third of a
-        # cell across, drawn to sit half-hidden inside a normal room. An alcove
-        # is one cell, so there is nowhere for it to hide: it bulges into the
-        # middle of the floor and reads as a pear stuck to the doorway. Moving
-        # the door out to the boundary cell hides the lobe but seals the alcove
-        # (measured: the wall comes out unbroken), so the shape has to change
-        # rather than the position. A rectangle straddling the wall is the
-        # plainest thing that still bridges it, and it leaves the cell square.
-        # Asymmetric, and the outward reach is a measurement rather than a
-        # taste: one wall thickness, which is the least that opens the way.
+        # Two regions that meet on a grid line always get a wall there, and no
+        # chip changes that: whatever either region owns past the line is
+        # simply outlined too. Measured over 30 seeds, every one of the 138
+        # alcoves had all four sides walled, opening included - the box was
+        # the only thing that read as a doorway, and it was an outline of our
+        # own chip, not a gap.
         #
-        # The alcove and the corridor are separate regions - that is where the
-        # alcove's walls come from - so each outlines what it owns, and
-        # whatever of this chip lies past the wall is outlined too. It shows as
-        # the alcove's north wall running a little into the corridor. Squaring
-        # the chip off *at* the line would end that, but it also seals the
-        # alcove: the region has to clear its own wall stroke to read as open,
-        # and at half a thickness, or none, the doorway measures shut on every
-        # side. So the overshoot is one `border_width` - the minimum that
-        # works - and no more. Seed 72's stairs 23: its north wall reaches
-        # 0.14 of a cell past the corner at 0.22, and 0.07 at this - the same
-        # as its own south wall, which has no doorway at all.
+        # So the gap is made the way dungeongen makes its own door glyph: with
+        # paint. `Door.draw` runs at `Layers.OVERLAY`, after `Map.render` has
+        # stroked the unified border path, and fills its leaf in `room_color`
+        # straight over the wall. Fill without the stroke that follows it and
+        # what is left is a hole in the wall and nothing else. There is floor
+        # on both sides of the line - the alcove and the passage that ends
+        # there - so white is the right colour on both.
+        #
+        # It has to be deep enough to cover the wall: the stroke is
+        # `border_width` centred on the line, so the band reaches a full
+        # thickness either way, which also takes the drop shadow with it.
+        #
+        # And it stops one thickness short of each corner. The doorway is as
+        # wide as what uses it and our corridors are one cell, so the gap is
+        # the whole side; but the border is stroked with a round join, so the
+        # two walls meeting at a corner reach a half-thickness along each
+        # other. Painting over that eats the corner itself.
         x0, y0 = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
-        inside, outside = CELL_SIZE * 0.2, dg_map.options.border_width
-        span = CELL_SIZE * 0.6
+        span = CELL_SIZE - 2 * dg_map.options.border_width
+        reach = dg_map.options.border_width
         inset = (CELL_SIZE - span) / 2
         if side in ("E", "W"):
-            gap = _Rectangle(
-                (x0 + CELL_SIZE - inside) if side == "E" else (x0 - outside),
-                y0 + inset, inside + outside, span)
+            hole = _Rectangle((x0 + CELL_SIZE if side == "E" else x0) - reach,
+                              y0 + inset, 2 * reach, span)
         else:
-            gap = _Rectangle(
-                x0 + inset,
-                (y0 + CELL_SIZE - inside) if side == "S" else (y0 - outside),
-                span, inside + outside)
-        chip = _ShapeGroup(includes=[gap], excludes=[])
-        element.get_side_shape = lambda connected, _chip=chip: _chip
+            hole = _Rectangle(x0 + inset,
+                              (y0 + CELL_SIZE if side == "S" else y0) - reach,
+                              span, 2 * reach)
+
+        def draw(canvas, layer=None, _hole=hole, _map=dg_map):
+            if layer is not _Layers.OVERLAY:
+                return
+            _hole.draw(canvas, _skia.Paint(AntiAlias=True,
+                                           Style=_skia.Paint.kFill_Style,
+                                           Color=_map.options.room_color))
+
+        element.draw = draw
 
 
 # dungeongen inflates every region by this much before drawing it
