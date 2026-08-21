@@ -140,6 +140,29 @@ narrates, not just what is drawn.
 `test_a_secret_entrance_does_not_breach_the_wall_in_dungeongen` skips exactly
 this case, and says so.
 
+## 4bis. Adjacent rooms share a wall that draws half again as thick
+
+Not ours, and not the alcove's: it is how dungeongen shades every room.
+`Map.render` draws the region's shadow untranslated and then its fill
+translated by `room_shadow_offset + border_width * 0.5` - (9, 11)px with the
+defaults. On a free-standing wall the shadow peeks out on one side and reads
+as a drop shadow, which is the intent. Where two rooms are adjacent the two
+offsets land on the same line and add up.
+
+Measured on two rooms built by hand straight in dungeongen's own model, no
+layout of ours involved - A at x2..5 and B at x5..8, sharing the line x=5,
+sampled at mid-height away from the corners:
+
+    shared wall (x=5.00):   4.928..5.073   9.2px, centred exactly on 5.000
+    outer wall  (x=2.00):   1.928..2.024   6.1px
+
+So the outline is exactly on the grid line; what thickens is the shading
+around it. It shows up on the stairs alcove more than anywhere else only
+because the band is the same size while the room is a tenth of the size.
+
+Changing it means changing `room_shadow_offset` or the fill translation for
+the whole map, which is a look-of-the-map decision rather than a fix.
+
 ## 4c. Stairs get an alcove of their own
 
 The steps are drawn in a one-cell **room** rather than a passage, and that is
