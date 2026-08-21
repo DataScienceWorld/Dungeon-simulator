@@ -5,7 +5,9 @@ context doesn't have to be rediscovered. Ordered roughly by how much each one
 changes what you actually see on the map.
 
 Everything here is *known and deliberate*, not a discovered-but-unreported
-bug. Measurements are from the state at commit `2642091` unless said
+bug. For how the machinery behaves - the traps, the non-obvious contracts, the
+measurements that mean something other than they look like - see `LESSONS.md`,
+which is the file to keep current as understanding changes. Measurements are from the state at commit `2642091` unless said
 otherwise; re-measure before trusting them, the numbers move.
 
 ---
