@@ -46,6 +46,13 @@ from .tables import (
     roll_room_shape,
 )
 
+def _extra_cells(width_ft: int) -> int:
+    """How many cells wider than an ordinary corridor a passage of this width
+    is. A corridor is one cell whatever it rolled (see `_cells` in layout.py),
+    so 10ft adds none, 20ft one and 30ft two."""
+    return max(1, round(width_ft / 10.0)) - 1
+
+
 DEFAULT_LIMITLESS_ROOMS = 40
 DEFAULT_PARTY_LEVEL = 5
 MAX_PASSAGE_SEGMENTS = 15
@@ -353,6 +360,7 @@ class DungeonGenerator:
         # writes its width there too). Only ever set on a child dispatched as
         # a passage, so the two cannot collide.
         carried_width = node.geo.get("width_ft")
+        carried_side = node.geo.get("width_side")
         if carried_width is not None:
             node.lines.append(
                 f"This passage is {carried_width} ft wide here, carried on from the "
@@ -385,7 +393,27 @@ class DungeonGenerator:
             if payload.get("turn"):
                 events.append({"type": "turn", "dir": payload["turn"]})
             if width_ft is not None:
-                events.append({"type": "resize", "width_ft": width_ft})
+                # Where the extra width goes. A passage is one cell wide, and
+                # widening it adds cells to one side or both: an even number
+                # of them splits evenly and the old corridor stays the middle
+                # of the new one, an odd number cannot, and which side gets
+                # the extra cell is rolled for rather than always the same
+                # one. 30ft is two cells added, one each side; 20ft is one,
+                # and this is the roll that places it.
+                #
+                # Rolled here and written down, like the wall a secret door
+                # ends up in (`_resolve_side`): it moves the corridor
+                # sideways on the map, so a reader has to be able to account
+                # for it without re-running the generator.
+                carried_side = None
+                if _extra_cells(width_ft) % 2:
+                    side_roll = self.dice.d100()
+                    carried_side = "left" if side_roll <= 50 else "right"
+                    node.lines.append(
+                        f"[Passage d100={side_roll}] The extra 10 ft goes on the "
+                        f"{carried_side}.")
+                events.append({"type": "resize", "width_ft": width_ft,
+                               "side": carried_side})
                 carried_width = width_ft
 
             if tag == "continue":
@@ -441,6 +469,7 @@ class DungeonGenerator:
                     carries_on = branch_dir is None
                     if carries_on and carried_width is not None:
                         child.geo["width_ft"] = carried_width
+                        child.geo["width_side"] = carried_side
                     node.children.append(child)
                     events.append({"type": "child", "turn": branch_dir,
                                    "carries_on": carries_on})
@@ -493,6 +522,7 @@ class DungeonGenerator:
                     onward = self.dispatch_beyond("passage", level, depth=depth + 1)
                     if carried_width is not None:
                         onward.geo["width_ft"] = carried_width
+                        onward.geo["width_side"] = carried_side
                     node.children.append(onward)
                     events.append({"type": "child", "turn": None, "carries_on": True})
                 return
@@ -532,6 +562,7 @@ class DungeonGenerator:
                 onward = self.dispatch_beyond("passage", level, depth=depth + 1)
                 if carried_width is not None:
                     onward.geo["width_ft"] = carried_width
+                    onward.geo["width_side"] = carried_side
                 node.children.append(onward)
                 events.append({"type": "child", "turn": None, "carries_on": True})
                 return
@@ -561,6 +592,7 @@ class DungeonGenerator:
                     onward = self.dispatch_beyond("passage", level, depth=depth + 1)
                     if carried_width is not None:
                         onward.geo["width_ft"] = carried_width
+                        onward.geo["width_side"] = carried_side
                     node.children.append(onward)
                     events.append({"type": "child", "turn": None, "carries_on": True})
                 return

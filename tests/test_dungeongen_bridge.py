@@ -1272,7 +1272,7 @@ def test_a_doors_chip_stays_on_its_own_side_of_the_wall():
     from dungeongen.constants import CELL_SIZE
 
     checked = 0
-    for seed in range(12):
+    for seed in range(20):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         for islands in compute_layout(dungeon).values():
             for island in islands:
@@ -1307,7 +1307,7 @@ def test_a_doors_glyph_is_drawn_on_the_wall_it_sits_in():
     from dungeongen.map.enums import Layers
 
     checked = 0
-    for seed in range(12):
+    for seed in range(20):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
         for islands in compute_layout(dungeon).values():
             for island in islands:

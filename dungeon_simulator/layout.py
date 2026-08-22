@@ -159,6 +159,38 @@ def _segment_cells(a, b):
     return set()
 
 
+def _widened_cells(cells, heading, width_cells, side):
+    """Every cell a run actually occupies, once its width is taken into
+    account.
+
+    A corridor is one cell wide; widening it adds cells to one side or both.
+    An even number of extra cells splits evenly, so the original run stays the
+    middle of the wider one - 30ft is two extra, one each side. An odd number
+    cannot split, and the side it goes to was rolled for in the generator and
+    travels here in the run: 20ft is one extra cell, left or right.
+
+    `left` is the left hand looking along the direction of travel: for a run
+    heading east that is north, and the vector (dy, -dx) gives it for every
+    heading without a table of cases."""
+    extra = width_cells - 1
+    if extra <= 0:
+        return set(cells)
+    dx, dy = _VECTORS[heading]
+    lx, ly = dy, -dx
+    half = extra // 2
+    if extra % 2 == 0:
+        left = right = half
+    elif side == "left":
+        left, right = half + 1, half
+    else:
+        left, right = half, half + 1
+    return {
+        (int(gx + lx * k), int(gy + ly * k))
+        for gx, gy in cells
+        for k in range(-right, left + 1)
+    }
+
+
 def _clip_at_placed_room(x, y, nx, ny, occupied):
     """Stop a move at the wall of the first already-placed room it runs into.
 
@@ -216,6 +248,63 @@ def _clip_at_placed_room(x, y, nx, ny, occupied):
     if best is None:
         return nx, ny, None, None
     return best[1]
+
+
+# Up to this many cells a widened corridor squeezes past whatever is already
+# drawn, running narrow for as long as the pinch lasts; wider than this it
+# stops instead. Two cells is 20ft.
+_SQUEEZE_THROUGH_CELLS = 2
+
+
+def _claimable(cells, occupied):
+    """The cells of a footprint that are not already a placed room's floor.
+
+    A widened corridor claims the ground beside it so nothing is built there
+    later - but where a room is standing there *already*, the corridor is the
+    one that gives way, and simply runs narrow for as long as the pinch
+    lasts."""
+    return {
+        (gx, gy) for gx, gy in cells
+        if not any(rx0 <= gx < rx1 and ry0 <= gy < ry1
+                   for rx0, ry0, rx1, ry1, _ in occupied)
+    }
+
+
+def _clip_wide_run(x, y, nx, ny, heading, width, side, occupied):
+    """Where a run of `width` cells has to stop, its flanks included.
+
+    `_clip_at_placed_room` walks the line down the middle, which is the whole
+    corridor when it is one cell wide and a third of it when it is three: a
+    widened passage could run its flank straight through a room placed
+    earlier. This walks the footprint a cell at a time and stops at the last
+    step that is wholly clear.
+
+    Only past `_SQUEEZE_THROUGH_CELLS`. Up to two cells - 20ft - a corridor
+    gets through: where a room is already standing on one of its flanks the
+    flank is simply not claimed there and the corridor runs narrow past the
+    pinch (`_claimable`). Stopping those too was tried and is catastrophic:
+    the stop cuts the branch, the generator then stops exploring past it, and
+    seed 1 came out with one room in the whole dungeon against a target of
+    54.
+
+    Returns (cx, cy, blocked) - `blocked` is True when something was in the
+    way, whether or not the run managed to move at all."""
+    if (nx, ny) == (x, y) or width <= _SQUEEZE_THROUGH_CELLS:
+        return nx, ny, False
+    dx, dy = _VECTORS[heading]
+    steps = int(round(abs(nx - x) + abs(ny - y)))
+    reached_x, reached_y = x, y
+    for step in range(steps):
+        ax, ay = x + dx * step, y + dy * step
+        bx, by = ax + dx, ay + dy
+        footprint = _widened_cells(_segment_cells((ax, ay), (bx, by)),
+                                   heading, width, side)
+        if any(rx0 <= gx < rx1 and ry0 <= gy < ry1
+               for gx, gy in footprint
+               for rx0, ry0, rx1, ry1, _ in occupied):
+            return reached_x, reached_y, True
+        reached_x, reached_y = bx, by
+    return reached_x, reached_y, False
 
 
 def _new_island() -> dict:
@@ -770,13 +859,15 @@ class _Layout:
         # than one corridor at a single, uniform width (which would either
         # under- or over-state most of its own length).
         width = _cells(node.geo.get("width_ft", DEFAULT_PASSAGE_WIDTH_FT))
-        runs = [{"width": width, "points": [(x, y)]}]
+        side = node.geo.get("width_side")
+        runs = [{"width": width, "side": side, "cells": set(), "points": [(x, y)]}]
         children = iter(node.children)
         pending = None  # a child pulled from the iterator but not dispatched
         had_child = False
         moved = False  # has the *current* run actually advanced yet?
 
         broke_into = None  # (room_id, wall) once this passage reaches a room already drawn
+        no_space = False   # a widened run whose flanks have nowhere to go
 
         def advance(length):
             """Walk `length` cells along the heading, stopping at the wall of
@@ -789,22 +880,43 @@ class _Layout:
             corridor cells across 40 seeds (11.9%) sat inside a room's floor,
             which dungeongen then drew as passage - a notch eaten out of the
             wall, opening onto nothing."""
-            nonlocal x, y, moved, broke_into
+            nonlocal x, y, moved, broke_into, no_space
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
+            # A widened corridor needs the ground its flanks stand on, and a
+            # room placed earlier owns whatever it is on. Where the footprint
+            # cannot get through, the passage stops - it does not squeeze, and
+            # it does not open into the room as a secret entrance the way a
+            # single-cell one does: a 30ft gallery is not a hidden door.
+            nx, ny, blocked = _clip_wide_run(
+                x, y, nx, ny, heading, width, side, island["_occupied"])
             cx, cy, room_id, wall = _clip_at_placed_room(x, y, nx, ny, island["_occupied"])
             if (cx, cy) != (x, y):
                 # Claimed as it is walked, not when the node finishes: a room
                 # placed by one of this passage's own children would otherwise
                 # not see the corridor it is standing on.
-                island["_route_cells"] |= _segment_cells((x, y), (cx, cy))
+                # The whole footprint, not just the line down the middle: a
+                # widened corridor owns the cells beside it too, and a room
+                # dropped on one of them would be built on top of it.
+                claimed = _claimable(
+                    _widened_cells(_segment_cells((x, y), (cx, cy)),
+                                   heading, width, side),
+                    island["_occupied"])
+                island["_route_cells"] |= claimed
+                # Kept on the run as well as claimed: `width` says how wide
+                # this stretch was rolled, and these are the cells it actually
+                # got - the two differ wherever it had to run narrow past
+                # something already standing there.
+                runs[-1]["cells"] |= claimed
                 x, y = cx, cy
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
                 moved = True
             if room_id is not None:
                 broke_into = (room_id, wall, (cx, cy))
-            return room_id is None
+            if blocked:
+                no_space = True
+            return room_id is None and not blocked
 
         def ensure_min_length():
             # Several rolls (a door/stairs "in the wall" with no length of
@@ -868,7 +980,9 @@ class _Layout:
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
                 width = _cells(max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT))
-                runs.append({"width": width, "points": [(x, y)]})
+                side = event.get("side")
+                runs.append({"width": width, "side": side, "cells": set(),
+                             "points": [(x, y)]})
                 moved = False
             elif etype == "child":
                 child = next(children, None)
@@ -947,7 +1061,28 @@ class _Layout:
         # can be the moment the passage first tries to move, so both can be
         # where it runs into a room - and a break-in reported nowhere left the
         # entry with neither a length nor a reason for not having one.
-        if broke_into is not None:
+        if no_space:
+            # A widened corridor that ran out of room stops there and stops
+            # plainly. A single-cell one that reaches a room already drawn
+            # opens into it as a secret entrance - a way in nobody planned -
+            # but a 20 or 30ft gallery is not a hidden door, and punching one
+            # into a room's wall at that width is not a secret anything.
+            self._note(
+                node,
+                f"[Layout] Questo passaggio e' largo {round(width * FT_PER_UNIT)}ft e non "
+                f"ha spazio per proseguire senza sovrapporsi a quello che e' gia' "
+                f"disegnato: si interrompe qui (il contenuto resta comunque nel registro)."
+            )
+            island["caps"].append({"id": node.id, "x": x, "y": y, "kind": "dead_end",
+                                   "lines": node.lines})
+            for remaining in ([pending] if pending is not None else []) + list(children):
+                self.cut.add(remaining.id)
+                if self.quiet:
+                    continue
+                for descendant in remaining.walk():
+                    if descendant.kind in ("room", "passage", "door", "stairs"):
+                        descendant.lines.append(_NOT_DRAWN)
+        elif broke_into is not None:
             # The passage has reached a room that was already on the map. It
             # stops against that wall and opens into it - a way in nobody
             # planned, so a secret one, which is what the rules call a passage
@@ -973,8 +1108,14 @@ class _Layout:
                     # direction is the way its opening faces out of the room, so it is
                     # that side verbatim. Recording the opposite put every one of these
                     # openings on the far wall of the room.
+                    #
+                    # The width the passage was walking when it arrived travels
+                    # with it: only a single-cell passage may open one of these,
+                    # and reading that back off the node's rolls is wrong - a
+                    # widening rolled *after* the break-in is still in the entry
+                    # even though the walk never reached it.
                     {"room_id": room_id, "x": stop[0], "y": stop[1],
-                     "direction": wall, "secret": True}
+                     "direction": wall, "secret": True, "width": width}
                 )
                 self._note(
                     node,
@@ -1020,6 +1161,7 @@ class _Layout:
             # same tooltip/log text several times over for one passage.
             island["corridors"].append({
                 "id": node.id, "points": deduped, "width": run["width"],
+                "side": run.get("side"), "cells": sorted(run.get("cells", ())),
                 "lines": node.lines if i == 0 else [],
             })
         return x, y
@@ -1050,6 +1192,12 @@ def _translate_island(island: dict, shift_x: float, shift_y: float) -> None:
         room["corners"] = [(cx + shift_x, cy + shift_y) for cx, cy in room["corners"]]
     for corridor in island["corridors"]:
         corridor["points"] = [(cx + shift_x, cy + shift_y) for cx, cy in corridor["points"]]
+        # The cells it claimed move with it. Left behind they read as
+        # pre-translation coordinates - the same trap `_takeoff` fell into,
+        # and it showed up as a corridor at (11,5) claiming cell (1,0).
+        if corridor.get("cells"):
+            corridor["cells"] = [(cx + int(shift_x), cy + int(shift_y))
+                                 for cx, cy in corridor["cells"]]
     for door in island["doors"]:
         door["x1"] += shift_x; door["y1"] += shift_y
         door["x2"] += shift_x; door["y2"] += shift_y

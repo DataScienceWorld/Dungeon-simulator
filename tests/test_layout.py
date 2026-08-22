@@ -480,6 +480,7 @@ def test_a_passage_with_no_length_of_its_own_says_so():
             if has_move:
                 continue
             if any("arriva contro la parete" in line or "parte gia' dentro" in line
+                   or "non ha spazio per proseguire" in line
                    for line in node.lines):
                 # It ran into a room already on the map before it could take
                 # even the minimum, so it genuinely has no length - and says
@@ -581,3 +582,121 @@ def test_stairs_say_where_they_come_out():
                     )
                     checked += 1
     assert checked > 50, f"expected plenty of stairs, found {checked}"
+
+
+def _corridor_flanks(island):
+    """The cells a corridor claimed *because of its width* - what it actually
+    got, less the line down the middle.
+
+    Read off the corridor's own `cells` rather than recomputed from its width:
+    a corridor up to 20ft runs narrow past anything already standing there, so
+    its recorded width and its real footprint legitimately differ.
+
+    Only the flanks, so this does not re-litigate the older residue of
+    single-cell corridors that end up inside a room's floor (TODO 5)."""
+    from dungeon_simulator.layout import _segment_cells
+    flanks = set()
+    for corridor in island["corridors"]:
+        if corridor.get("width", 1) <= 1:
+            continue
+        middle = set()
+        points = corridor["points"]
+        for a, b in zip(points, points[1:]):
+            if a != b:
+                middle |= _segment_cells(a, b)
+        flanks |= set(map(tuple, corridor.get("cells", ()))) - middle
+    return flanks
+
+
+def test_a_widened_corridor_is_centred_or_falls_to_the_rolled_side():
+    """A corridor is one cell wide, and widening it adds cells beside it.
+
+    Two extra cells (30ft) split evenly, so the run stays the middle of the
+    wider corridor. One (20ft) cannot split, and the side it goes to is rolled
+    in the generator and travels with the run - always putting it on the same
+    hand would bend every wide corridor the same way."""
+    from dungeon_simulator.layout import _widened_cells
+
+    line = {(5, 3), (6, 3), (7, 3)}
+    assert _widened_cells(line, "E", 1, None) == line
+    assert _widened_cells(line, "E", 3, None) == {
+        (x, y) for x in (5, 6, 7) for y in (2, 3, 4)
+    }, "30ft heading east should sit one cell either side of its own line"
+    assert _widened_cells(line, "E", 2, "left") == {
+        (x, y) for x in (5, 6, 7) for y in (2, 3)
+    }, "left of east is north"
+    assert _widened_cells(line, "E", 2, "right") == {
+        (x, y) for x in (5, 6, 7) for y in (3, 4)
+    }
+    # and the left hand turns with the heading, without a table of cases
+    assert _widened_cells({(5, 3)}, "N", 2, "left") == {(4, 3), (5, 3)}
+    assert _widened_cells({(5, 3)}, "S", 2, "left") == {(5, 3), (6, 3)}
+
+
+def test_no_room_is_built_on_a_widened_corridors_flank():
+    """The cells beside a wide corridor are its own, and a room dropped on one
+    would be built on top of it.
+
+    They used to be nobody's: `_route_cells` claimed the line down the middle
+    whatever the corridor's width, so a 30ft one guarded a third of its own
+    footprint. It costs about one room in a hundred - measured over 120 seeds,
+    the share the layout cannot place goes from 14.9% to 15.9% - which is what
+    the ground actually being occupied costs."""
+    checked = 0
+    for seed in range(30):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                wide = [c for c in island["corridors"] if c.get("width", 1) > 1]
+                if not wide:
+                    continue
+                flanks = _corridor_flanks(island)
+                for x0, y0, x1, y1 in _room_rects(island).values():
+                    inside = {(gx, gy)
+                              for gx in range(int(x0), int(x1))
+                              for gy in range(int(y0), int(y1))} & flanks
+                    assert not inside, (
+                        f"seed {seed}: a room covers {sorted(inside)[:4]}, which is the "
+                        f"flank of a corridor already widened over it"
+                    )
+                checked += 1
+    assert checked > 10, f"expected plenty of islands with a wide corridor, found {checked}"
+
+
+def test_a_widened_passage_that_runs_out_of_room_stops_and_says_so():
+    """It does not squeeze past what is already drawn, and it does not open
+    into a room as a secret entrance.
+
+    A single-cell passage that reaches a room already on the map opens there -
+    a way in nobody planned, which is what a secret entrance is. A 20 or 30ft
+    gallery is not a hidden door, and punching one into a room's wall at that
+    width is not a secret anything. It stops instead, with a note saying why,
+    and the rest of its branch is cut like any other stop. Over 40 seeds: 7 of
+    them stop this way, against 48 secret entrances that all come from
+    single-cell passages."""
+    stopped = opened = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                for exit_ in island["room_exits"]:
+                    if not exit_.get("secret"):
+                        continue
+                    opened += 1
+                    # The width the passage was actually walking when it
+                    # arrived, recorded on the exit: reading it back off the
+                    # node's rolls is wrong, because a widening rolled after
+                    # the break-in is still in the entry even though the walk
+                    # never reached it.
+                    # Up to 20ft a passage squeezes past rather than
+                    # stopping, so it can still reach a room and open there.
+                    # Wider than that it stops instead, and never opens one.
+                    assert exit_.get("width", 1) <= 2, (
+                        f"seed {seed}: a passage {exit_['width']} cells wide opened a "
+                        f"secret entrance into room #{exit_['room_id']}"
+                    )
+        for node in dungeon.all_nodes():
+            if any("non ha spazio per proseguire" in l for l in node.lines):
+                stopped += 1
+    assert stopped >= 2, f"expected a few wide passages to run out of room, found {stopped}"
+    assert opened > 20, f"expected plenty of secret entrances, found {opened}"

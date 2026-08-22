@@ -479,6 +479,32 @@ dungeongen's own hatching density, not how the passage branches.
 
 ---
 
+## 8b. Un passaggio largo che ne incrocia un altro: fermarsi e fondersi
+
+Chiesto e **non fatto**. Le altre tre regole sull'allargamento ci sono: dove si
+innesta la larghezza in piu' (in mezzo se le celle aggiunte sono pari, dal lato
+tirato se sono dispari), l'impronta rivendicata perche' nessuno ci costruisca
+sopra, e la fermata quando non c'e' spazio - vedi
+[`docs/tabelle/passage.md`](docs/tabelle/passage.md).
+
+Manca il caso in cui l'impronta ne incrocia **un'altra**: la regola voluta e'
+*interrompere il passaggio e fondere i due*. Oggi `_clip_wide_run` guarda solo
+`_occupied`, cioe' le stanze; due corridoi che si sovrappongono restano due
+regioni distinte con un muro in mezzo - lo stesso problema degli incroci, per
+cui esiste gia' `_claim_takeoff_cell`.
+
+Da stabilire prima di scriverlo:
+
+- **cosa vuol dire fondere.** Nel modello: le due tratte devono finire nella
+  stessa regione di dungeongen, che non guarda la geometria ma le
+  `connections`. Il precedente e' `_claim_takeoff_cell`, che fa esattamente
+  questo per un ramo e il suo tronco.
+- **chi si ferma.** Quello che arriva dopo, presumibilmente, come per le
+  stanze: chi disegna prima ha la precedenza.
+- **cosa ne e' del resto del ramo.** Se il passaggio si interrompe, i suoi
+  figli vanno tagliati come in ogni altra fermata - a meno che "fondersi" non
+  voglia dire che si prosegue *dentro* l'altro corridoio.
+
 ## 9. Cose che le tabelle dicono e la mappa non sa dire
 
 Un inventario, tabella per tabella, di ogni risultato che produce qualcosa di

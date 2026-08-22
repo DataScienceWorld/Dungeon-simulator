@@ -55,6 +55,34 @@ eredita lo scrive nella sua voce (*"This passage is N ft wide here, carried on
 from the roll that changed it."*), perché il tiro che l'ha allargato sta in
 un'altra voce. Su 20 seed i tratti larghi disegnati passano da 53 a 71.
 
+**Dove si innesta la larghezza in più.** Un corridoio è largo una cella;
+allargarlo aggiunge celle di fianco. **Due celle in più (30ft) si dividono in
+parti uguali**, quindi il corridoio vecchio resta il centro di quello nuovo.
+**Una sola (20ft) non si può dividere**, e da che parte va **si tira**
+(`[Passage d100=N] The extra 10 ft goes on the left/right.`) - metterla sempre
+dalla stessa parte piegherebbe tutti i corridoi larghi nello stesso verso. Su
+40 seed: 24 a sinistra, 24 a destra. "Sinistra" è la sinistra guardando nel
+verso di marcia, e il vettore `(dy, -dx)` la dà per ogni direzione senza una
+tabella di casi (`_widened_cells`).
+
+**Le celle di fianco sono sue.** Prima `_route_cells` rivendicava solo la linea
+di mezzo qualunque fosse la larghezza, quindi un corridoio da 30ft ne
+proteggeva un terzo e una stanza poteva essere costruita sopra il resto. Ora
+rivendica tutta l'impronta. Costa: su 120 seed le stanze che il layout non
+riesce a piazzare passano dal 14.9% al 15.9% - il prezzo del fatto che quel
+terreno è davvero occupato.
+
+**E se non c'è spazio, il passaggio si interrompe.** L'impronta viene fermata
+contro le stanze già disegnate un passo alla volta (`_clip_wide_run`), fianchi
+compresi. Un passaggio da una cella che arriva contro una stanza già disegnata
+vi si apre come **ingresso segreto**; uno più largo **no** - una galleria da 20
+o 30ft non è una porta nascosta - e si ferma lì con la sua riga `[Layout]`. Su
+40 seed: 7 fermate così, contro 48 ingressi segreti tutti da passaggi di una
+cella. La larghezza al momento dell'arrivo viaggia con l'uscita segreta
+(`room_exits[...]["width"]`), perché rileggerla dai tiri del nodo sarebbe
+sbagliato: un allargamento tirato *dopo* lo scontro resta nella voce anche se
+la camminata non ci è mai arrivata.
+
 **Ma dungeongen non sa disegnare un corridoio largo.** `Passage.__init__`
 rifiuta con un `ValueError` qualunque cosa non sia esattamente una cella
 (*"Passage must be exactly one cell wide"*), e il suo adattatore non guarda
