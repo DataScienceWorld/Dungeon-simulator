@@ -350,34 +350,28 @@ def test_an_opening_in_the_floor_forks_down_and_straight_on():
     ways on, two entries. The way down is at the level below, so the layout
     starts it on an island of its own.
 
-    The only opening with one way on is a secret trapdoor nobody found."""
-    forked = single = 0
+    Both ways are there whatever the opening turns out to be, a secret
+    trapdoor nobody spotted included: what the party notices does not decide
+    what the dungeon contains."""
+    forked = 0
     for seed, node in _floor_openings():
         turns = [e.get("turn") for e in node.geo.get("events", []) if e["type"] == "child"]
-        unnoticed = any("goes unnoticed" in line for line in node.lines)
-        if unnoticed:
-            assert turns == [None], (
-                f"seed {seed} passage #{node.id}: nobody found the trapdoor, so the only "
-                f"way on is straight ahead, got {turns}"
+        assert turns == [None, None], (
+            f"seed {seed} passage #{node.id}: an opening in the floor is down *and* "
+            f"straight on, got {turns}"
+        )
+        # Down first, then on. Children can be fewer than the ways on - a
+        # branch the map will never reach is cut and its event stays behind in
+        # the log - so this is only checked when both survived.
+        levels = [child.level for child in node.children]
+        assert len(levels) <= 2
+        if len(levels) == 2:
+            assert levels[0] > node.level and levels[1] == node.level, (
+                f"seed {seed} passage #{node.id}: expected the way down then the way "
+                f"on, got levels {levels} from a passage on level {node.level}"
             )
-            single += 1
-        else:
-            assert turns == [None, None], (
-                f"seed {seed} passage #{node.id}: an opening in the floor is down *and* "
-                f"straight on, got {turns}"
-            )
-            # Down first, then on. Children can be fewer than the ways on -
-            # a branch the map will never reach is cut and its event stays
-            # behind in the log - so this is only checked when both survived.
-            levels = [child.level for child in node.children]
-            assert len(levels) <= 2
-            if len(levels) == 2:
-                assert levels[0] > node.level and levels[1] == node.level, (
-                    f"seed {seed} passage #{node.id}: expected the way down then the way "
-                    f"on, got levels {levels} from a passage on level {node.level}"
-                )
-            forked += 1
-    assert forked > 40 and single > 5, f"forked {forked}, single {single}"
+        forked += 1
+    assert forked > 40, f"forked {forked}"
 
 
 def test_what_the_opening_in_the_floor_is_gets_rolled_and_written_down():
@@ -399,30 +393,67 @@ def test_what_the_opening_in_the_floor_is_gets_rolled_and_written_down():
     assert len(kinds) == 3, f"all three d3 results should turn up, saw {kinds}"
 
 
-def test_a_secret_trapdoor_nobody_notices_leaves_no_way_down():
-    """Same as an unnoticed secret door: it stays in the log, because the dice
-    produced it, and produces nothing beyond, because nobody found it. A found
-    one opens the way down like any other hole."""
+def test_a_secret_trapdoor_is_there_whether_or_not_anyone_notices_it():
+    """A Perception roll is a fact about the party, not about the floor.
+
+    It used to decide whether the trapdoor existed at all: a failed check
+    quietly deleted the branch under it, dice, rooms and everything. Now the
+    roll only says whether anyone spotted it, and what is underneath is
+    explored either way."""
     found = missed = 0
     for seed, node in _floor_openings():
-        if not any("secret trapdoor" in line for line in node.lines):
+        if not any("trapdoor" in line for line in node.lines):
             continue
-        below = [child for child in node.children if child.level > node.level]
-        if any("goes unnoticed" in line for line in node.lines):
-            assert not below, (
-                f"seed {seed} passage #{node.id}: the trapdoor went unnoticed but there "
-                f"is still a way down"
+        # Only when both ways on survived: a branch the map will never reach
+        # is cut, and then the way down is missing for a reason that has
+        # nothing to do with the trapdoor.
+        if len(node.children) == 2:
+            below = [child for child in node.children if child.level > node.level]
+            assert below, (
+                f"seed {seed} passage #{node.id}: there is a trapdoor here and no way "
+                f"down through it"
             )
+        if any("nobody notices" in line for line in node.lines):
             missed += 1
         else:
             assert any("The trapdoor is found" in line for line in node.lines)
-            # Only when both ways on survived: a branch the map will never
-            # reach is cut, and then the way down is missing for a reason that
-            # has nothing to do with the trapdoor.
-            if len(node.children) == 2:
-                assert below, (
-                    f"seed {seed} passage #{node.id}: the trapdoor was found but there "
-                    f"is no way down"
-                )
             found += 1
     assert found > 3 and missed > 5, f"found {found}, missed {missed}"
+
+
+def test_a_secret_door_is_explored_whether_or_not_anyone_finds_it():
+    """A Perception roll says what the party noticed, not what is behind the
+    wall.
+
+    It used to decide both: a failed check meant no child was dispatched at
+    all, so a whole branch of the dungeon - its rooms, its contents, its own
+    rolls - was quietly deleted by one bad d20. Seed 72's passage 13 rolled a
+    secret door in its left wall, missed the check at 13 vs 15, and the room
+    behind it never existed.
+
+    Both places the Passage Table puts one: in a wall (row 14) and at a dead
+    end (row 6, once the 40% says there is one)."""
+    found = missed = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage":
+                continue
+            noticed = [line for line in node.lines
+                       if "secret door" in line.lower() and "Perception" in line]
+            if not noticed:
+                continue
+            line = noticed[-1]
+            # A branch the map will never reach is cut after the fact, so the
+            # rule is about the event: the way through the secret door was
+            # dispatched.
+            ways = [e for e in node.geo.get("events", []) if e["type"] == "child"]
+            assert ways, (
+                f"seed {seed} passage #{node.id}: there is a secret door here and "
+                f"nothing was explored beyond it - {line!r}"
+            )
+            if "goes unnoticed" in line or "nobody notices" in line:
+                missed += 1
+            else:
+                found += 1
+    assert found > 5 and missed > 10, f"found {found}, missed {missed}"

@@ -57,6 +57,18 @@ sempre lo stesso, e dipende da una sola cosa: se la porta è segreta o no.
   un rettangolo che la attraversa, dato **intero a entrambi i lati** così i due
   contorni coincidono invece di lasciare una cucitura in mezzo. L'anta resta
   dove la mette dungeongen, che in questo caso è già il centro della soglia.
+- **Apertura di stanza senza porta** (una stanza si apre su scale, un vicolo
+  cieco o il bordo della mappa, e nessun collegamento stanza-stanza la copre):
+  dungeongen riceve un `Exit`, che disegna *"a skewed inverted U archway
+  extending away from the dungeon"* - una macchia nera in prospettiva **dentro
+  la stanza**, contro il muro - e non apre niente: il muro dietro restava
+  intero. È la "porta" che si vedeva fra la stanza 6 e il passaggio 13 del
+  seed 72, dove il tiro diceva *"an open way through, no door"*. Ora al suo
+  posto viene disegnato quello che il tiro ha detto: un **varco dipinto** sul
+  muro se è un'apertura semplice (213 su 293 in 20 seed), la solita **porta
+  rettangolare** se il layout ci ha messo un nodo porta (68), e **niente** se
+  oltre non c'è pavimento scavato o se di là c'è l'alcova di una scala, che ha
+  già la sua unica apertura (8). Vedi `_square_off_room_exits`.
 - **Porta segreta** (`beyond == "secret"`): il muro **resta intero** e **non
   viene disegnata nessuna anta**. Prima ne veniva disegnata una: la porta
   segreta si vedeva come una porta qualsiasi, con la "S" sopra. Ora l'unico

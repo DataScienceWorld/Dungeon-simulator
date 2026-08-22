@@ -5,7 +5,13 @@ Fonte: `SECRET_DOOR_TABLE` in `tables.py`. Interpretata da
 
 Si tira quando qualcosa manda `beyond = "secret"`: la
 [Door Table](door.md) 46-50, oppure la [Passage Table](passage.md) 6 (vicolo
-cieco con porta segreta trovata) e 14 (porta segreta in una parete, trovata).
+cieco con porta segreta) e 14 (porta segreta in una parete).
+
+**La prova di Percezione non decide se la porta esiste.** Decide solo se il
+gruppo la nota, e il registro lo scrive nei due modi; il ramo oltre viene
+generato ed esplorato comunque. Prima non era così, e un d20 sfortunato
+cancellava in silenzio un intero ramo del dungeon - stanze, contenuti e tiri
+compresi. Un tiro di Percezione è un fatto sul gruppo, non sul muro.
 
 Riga di registro: `[Secret Door d6=N]`, e questa riga viene **messa in testa
 alla voce del nodo che sta oltre**, non a una voce sua. Una porta segreta non ha

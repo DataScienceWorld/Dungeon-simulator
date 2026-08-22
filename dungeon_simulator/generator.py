@@ -427,30 +427,46 @@ class DungeonGenerator:
 
             if tag == "dead_end_secret":
                 if self.dice.chance(40):
+                    # The door is there or it is not - that is what the 40%
+                    # decides. Whether anyone spots it is a separate question,
+                    # and it does not unmake the dungeon: what lies behind is
+                    # explored either way, and the map marks the door with an
+                    # "S". A Perception roll is a fact about the party, not
+                    # about the walls.
                     roll, found = self.dice.check(dc=15)
-                    if found:
-                        node.lines.append(f"A secret door is found here (Perception {roll} vs DC 15)!")
-                        node.children.append(self.dispatch_beyond("secret", level, depth=depth + 1))
-                        events.append({"type": "child", "turn": None})
-                    else:
-                        node.lines.append(f"There's a secret door here, but it goes unnoticed (Perception {roll} vs DC 15).")
+                    node.lines.append(
+                        f"A secret door is found here (Perception {roll} vs DC 15)!"
+                        if found else
+                        f"There's a secret door here, and it goes unnoticed "
+                        f"(Perception {roll} vs DC 15) - but it is there.")
+                    child = self.dispatch_beyond("secret", level, depth=depth + 1)
+                    child.geo["secret_wall"] = True
+                    node.children.append(child)
+                    events.append({"type": "child", "turn": None})
                 else:
                     node.lines.append("A true dead end.")
                 return
 
             if tag == "secret_door_check":
+                # The table put a secret door in this wall; the roll only says
+                # whether anyone noticed it. It is on the map either way, with
+                # an "S", and what lies behind it is explored either way -
+                # otherwise a failed Perception check quietly deletes a whole
+                # branch of the dungeon.
                 roll, found = self.dice.check(dc=15)
-                if found:
-                    node.lines.append(f"Secret door found (Perception {roll} vs DC 15)!")
-                    node.children.append(self.dispatch_beyond("secret", level, depth=depth + 1))
-                    # A side branch, like the other doors this table puts in a
-                    # passage *wall*. It used to be dispatched straight ahead,
-                    # which was only ever survivable because finding it ended
-                    # the passage - now that the passage may carry on past it,
-                    # the two would be drawn down the same cells.
-                    events.append({"type": "child", "turn": self._resolve_side(node, payload.get("side"))})
-                else:
-                    node.lines.append(f"Perception {roll} vs DC 15 - nothing noticed.")
+                node.lines.append(
+                    f"Secret door found (Perception {roll} vs DC 15)!" if found else
+                    f"Perception {roll} vs DC 15 - nobody notices it, but the secret "
+                    f"door is there.")
+                child = self.dispatch_beyond("secret", level, depth=depth + 1)
+                child.geo["secret_wall"] = True
+                node.children.append(child)
+                # A side branch, like the other doors this table puts in a
+                # passage *wall*. It used to be dispatched straight ahead,
+                # which was only ever survivable because finding it ended
+                # the passage - now that the passage may carry on past it,
+                # the two would be drawn down the same cells.
+                events.append({"type": "child", "turn": self._resolve_side(node, payload.get("side"))})
                 if self._passage_carries_on(node, payload):
                     onward = self.dispatch_beyond("passage", level, depth=depth + 1)
                     node.children.append(onward)
@@ -472,28 +488,23 @@ class DungeonGenerator:
                 open_value, open_entry = FLOOR_OPENING_TABLE.roll(self.dice)
                 opening = open_entry.payload
                 node.lines.append(f"[Opening d3={open_value}] {opening['text']}")
-                reachable = True
                 if opening["kind"] == "trap":
                     node.lines.append(f"Trapped! {roll_trap(self.dice, self.party_level)}.")
                 elif opening["kind"] == "secret_trapdoor":
+                    # Same rule as a secret door: the trapdoor is there
+                    # whether or not anyone spots it, and what is under it is
+                    # explored either way.
                     roll, found = self.dice.check(dc=opening["find_dc"])
-                    if found:
-                        node.lines.append(
-                            f"The trapdoor is found (Perception {roll} vs DC {opening['find_dc']})!")
-                    else:
-                        # Same as an unnoticed secret door: it is in the log
-                        # because the dice produced it, and nowhere on the map
-                        # because nobody found it.
-                        node.lines.append(
-                            f"Perception {roll} vs DC {opening['find_dc']} - the trapdoor "
-                            f"goes unnoticed, and the way down with it.")
-                        reachable = False
-                if reachable:
-                    sub = self.dice.d4()
-                    child = self.dispatch_beyond("passage" if sub <= 2 else "room",
-                                                 level + 1, depth=depth + 1)
-                    node.children.append(child)
-                    events.append({"type": "child", "turn": None})
+                    node.lines.append(
+                        f"The trapdoor is found (Perception {roll} vs DC "
+                        f"{opening['find_dc']})!" if found else
+                        f"Perception {roll} vs DC {opening['find_dc']} - nobody notices "
+                        f"the trapdoor, but it is there.")
+                sub = self.dice.d4()
+                child = self.dispatch_beyond("passage" if sub <= 2 else "room",
+                                             level + 1, depth=depth + 1)
+                node.children.append(child)
+                events.append({"type": "child", "turn": None})
                 onward = self.dispatch_beyond("passage", level, depth=depth + 1)
                 node.children.append(onward)
                 events.append({"type": "child", "turn": None})

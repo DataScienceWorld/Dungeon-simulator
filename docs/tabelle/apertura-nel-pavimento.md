@@ -9,13 +9,12 @@ cosa sia. Riga di registro: `[Opening d3=N] <testo>`.
 
 Il tiro **non cambia la caduta** - la profondità è già stata tirata dalla riga
 19 - e non cambia il bivio: da un'apertura nel pavimento si può sempre
-scendere o tirare dritto, e sono due nodi. Cambia solo cosa si trova, e in un
-caso se la via giù è raggiungibile.
+scendere o tirare dritto, e sono due nodi. Cambia solo cosa si trova.
 
 | d3 | l'apertura è | come lo interpreto |
 |---|---|---|
 | **1** | Una trappola: il pavimento cede sotto di te | Si tira sulla [Trap Table](trap.md), quattro volte come vuole la fonte, e la riga `Trapped! ...` finisce nella voce del passaggio. La via giù resta aperta: la trappola è scattata, tu sei di sotto. |
-| **2** | Una botola segreta - va trovata | Prova di Percezione **DC 15**, la stessa di ogni altra cosa nascosta qui. **Trovata**: `The trapdoor is found (Perception N vs DC 15)!` e la via giù esiste. **Non trovata**: la riga lo dice (`... the trapdoor goes unnoticed, and the way down with it.`) e **il ramo verso il basso non viene nemmeno generato** - resta solo la via dritta. Stesso trattamento di una porta segreta che nessuno nota: nel registro perché i dadi l'hanno prodotta, non sulla mappa perché nessuno l'ha vista. Su 60 seed: 27 botole, 17 non notate. |
+| **2** | Una botola segreta - va trovata | Prova di Percezione **DC 15**, la stessa di ogni altra cosa nascosta qui. Decide **solo se qualcuno la nota**, non se c'è: la botola è lì in entrambi i casi e quello che sta sotto viene esplorato comunque. È un fatto sul gruppo, non sul pavimento. |
 | **3** | Un buco dove il pavimento ha ceduto | Niente di più: è lì e si vede. |
 
 ## Il bivio
@@ -29,8 +28,7 @@ Un'apertura nel pavimento è **due vie**, quindi due nodi:
 Il passaggio finisce al bivio, come a un incrocio a T o a un passaggio
 laterale. Prima scendeva e basta: il corridoio oltre l'apertura non esisteva
 proprio, e sulla mappa la galleria si interrompeva senza che il registro
-dicesse perché. Su 60 seed sono 97 aperture, 80 con due vie e 17 con una sola
-(le botole non notate).
+dicesse perché.
 
 ## Da indagare
 

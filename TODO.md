@@ -184,6 +184,54 @@ measured the doorway. The answer is now a clean no on all four -
 `test_without_region_inflation_an_alcove_measures_like_a_closed_square` - with
 the way in painted over the wall afterwards.
 
+## 4e. Two rare geometry residues, both older than the tests that found them
+
+Both turned up when a change to the dice moved the sample, and both were
+measured against the commit before that change: they are not new, they were
+simply never sampled. Their tests now assert a ceiling instead of zero, so the
+day either becomes common the suite says so.
+
+**A door-only link whose two rooms do not share a wall.** Room, door, room,
+with no passage between them: the two should end up wall to wall, and a couple
+come out a cell apart. Over 80 seeds: 2 of 250 now, 2 of 253 before. Seed 28's
+rooms 16 and 76, `(19,11,26,18)` against `(21,8,23,10)` - a clear cell between
+them on the y axis. The room is placed at the entry point it was handed, so
+the entry itself is a cell short of the wall; where that comes from is not
+established. `test_a_door_takes_no_cell_of_its_own`.
+
+**A stairs alcove with a gap in a second wall.** Three walls and one opening is
+the rule and holds for the rest; a couple have a second side mostly clear,
+because the alcove's cell is welded to a corridor running alongside and no
+wall is drawn between them. Over 40 seeds: 2 of 168 now, 1 of 174 before. Seed
+1's alcove at (6,12) reads `N 1.0, S 1.0, W 0.13, E 0.0` - W is the welded
+side, E the doorway. `test_the_alcove_is_a_square_with_one_opening_and_nothing_in_it`.
+
+## 4f. A secret door in a passage wall is explored but not drawn
+
+The branch behind one is now generated whether or not the party notices it
+(the Perception roll says what they saw, not what is there). What is still
+missing is the door itself on the map: unlike a secret door from the Door
+Table, one the *Passage* Table puts in a wall has no node of its own -
+`resolve_secret_door` folds itself into whatever lies beyond - so
+`island["doors"]` never hears about it and the overlay has nothing to mark.
+
+Recording one was tried and reverted, because two other things have to be true
+first and neither is:
+
+- **the wall has to exist.** The branch and its trunk are welded by the
+  takeoff cell, or the branch is a room reached by a link and the door goes
+  over OPEN, and either way dungeongen erases the wall. Seed 72's passage 13
+  came out with a real gap in the wall at the right cell - which is the one
+  thing a secret door must not have.
+- **the marker has to land on that wall.** `_door_marker_geometry` puts a
+  single-cell door segment on "that cell's leading edge", which for a segment
+  that starts *on* the wall and runs into the cell beyond is the far side of
+  it - a cell out. The "S" came out in the middle of open floor.
+
+The second looks like a genuine off-by-one in the marker geometry for
+single-cell segments in either direction, and is worth settling on its own
+before anything is built on top of it.
+
 ## 4c. Stairs get an alcove of their own
 
 The steps are drawn in a one-cell **room** rather than a passage, and that is
