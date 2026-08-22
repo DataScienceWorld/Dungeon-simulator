@@ -1,0 +1,69 @@
+# Door Table (d100)
+
+Fonte: `DOOR_TABLE` in `tables.py`. Interpretata da
+`DungeonGenerator._fill_door`, disegnata dal ramo `door` di
+`_LayoutWalker._walk` e consegnata a dungeongen da `_door_type_at` /
+`_door_kind`.
+
+Riga di registro: `[Door d100=N] <testo>`, seguita dalle righe delle prove che
+quel risultato comporta.
+
+## Come si disegna una porta, qualunque sia il risultato
+
+Il *risultato* decide il testo, le prove e cosa c'è **oltre**. Il disegno è
+sempre lo stesso, e dipende da una sola cosa: se la porta è segreta o no.
+
+- **La porta sta sul muro.** Non occupa nessuna cella e la camminata non avanza
+  attraverso di essa (`node.geo["length_ft"] = 5`, ma quel 5 non diventa una
+  cella come tutto il resto: è l'unica eccezione alla regola dei 10 ft). Il
+  segmento registrato resta di una unità di griglia perché è ciò che dice su
+  quale linea di muro si trova.
+- Il percorso però **attraversa la soglia** (`path.points` avanza di una cella):
+  senza, la cella finale del collegamento resta dalla parte sbagliata del muro,
+  `_door_type_at` non riconosce la porta e la consegna come **aperta** - e in
+  dungeongen una porta aperta non è un glifo, è un buco: fonde le due regioni e
+  il muro sparisce. È così che due stanze che condividevano solo un muro sono
+  venute fuori disegnate come una sola.
+- **Ogni porta viene consegnata CHIUSA**, segrete comprese (`_door_kind`).
+  dungeongen ha un tipo `SECRET`, ma il suo adattatore webview lo ripiega su
+  `OPEN`, cioè su un buco: consegnare onestamente una porta segreta la
+  trasformava nell'unica cosa che una porta segreta non deve essere,
+  un'apertura.
+- **Porta normale**: glifo di porta chiusa di dungeongen + un rettangolo
+  invisibile per il tooltip con tutto il testo della voce.
+- **Porta segreta** (`beyond == "secret"`): il muro **resta intero**, e sopra ci
+  va il marchio **"S"** dell'overlay, con tooltip `Porta segreta. <testo>`.
+
+## I risultati
+
+`beyond` che compaiono: `room`, `passage`, `secret` (→ [Secret
+Door](secret-door.md)), `d4_passage_stairs_room` (d4 1 passaggio, 2 scale, 3-4
+stanza), `d4_passage_room` (d4 1 passaggio, altrimenti stanza).
+
+| d100 | testo della tabella | come lo interpreto |
+|---|---|---|
+| **1-20** | Porta di legno rinforzata, non chiusa a chiave | Nessuna prova. Oltre: d4 passaggio/scale/stanza. Glifo di porta chiusa. |
+| **21-25** | Grata di ferro con leva; d4 1-2 chiusa, 3-4 aperta; DC 14 arnesi, DC 19 Forza; la leva potrebbe essere trappolata | Nel registro: `Lock check: N vs DC 14` e `Forcing it open: N vs DC 19`, entrambi con esito. La leva "potrebbe essere trappolata" resta **solo testo** - non c'è tiro. Sulla mappa è una porta chiusa come le altre: la grata non ha un glifo suo. |
+| **26-30** | Vano vuoto. Forse un glifo magico | Oltre: d4 passaggio/scale/stanza. Il "poco probabile" della fonte è reso con **35%** di trappola (`trap_chance_pct`), e se scatta si tira Percezione DC 15. **Attenzione**: è un vano *vuoto*, ma sulla mappa viene comunque disegnato il glifo della porta chiusa - il modello non ha un "arco senza porta" separato. Vedi *Da indagare*. |
+| **31-35** | Porta di legno chiusa a chiave. DC 15, o sfondarla (AC 12, 20 hp) | `Lock check` DC 15. Oltre: stanza. |
+| **36-40** | Porta di ferro chiusa a chiave. DC 14 | `Lock check` DC 14. Oltre: d4 passaggio/stanza. |
+| **41-45** | Porta di pietra chiusa e trappolata. DC 15 per trovare la trappola | `Lock check` DC 15 **e** trappola al 100%, con Percezione DC 15. Due righe di prova. Oltre: d4 passaggio/scale/stanza. |
+| **46-50** | Porta segreta. Oltre (d4) 1: passaggio nascosto, 2-4: camera nascosta | **L'unica riga che rende la porta segreta sulla mappa**: `geo["secret"] = True`, muro intero, marchio "S". Il d4 lo tira la [Secret Door Table](secret-door.md), che è ciò che sta davvero dietro. |
+| **51-55** | Ingresso, poi 10 ft fino a un passaggio adiacente. Arco vuoto, nessuna porta | Oltre: passaggio. **Come sopra**: il testo dice "nessuna porta" ma il glifo viene disegnato lo stesso. Vedi *Da indagare*. |
+| **56-60** | Porta di pietra con enigma. DC 14 Intelligenza | `Lock check` DC 14. Oltre: d4 passaggio/stanza. |
+| **61-75** | Materiale e stato tirati a caso | Tre d6: materiale (1-2 legno, 3-4 pietra, 5-6 ferro), chiusa se d6≤3, trappolata se d6=1. Il risultato è **una riga in chiaro** nel registro (`Stone door, locked, untrapped.`). Sulla mappa non cambia niente: il glifo è lo stesso per tutti i materiali. |
+| **76-80** | Porta trappolata. DC 15 per trovarla | Trappola al 100%, Percezione DC 15. Oltre: d4 passaggio/stanza. |
+| **81-85** | Chiusa, apribile solo con una chiave portata da un umanoide nel dungeon | Riga di promemoria nel registro. Nessun tiro, nessun segno sulla mappa: la chiave non viene piazzata da nessuna parte. |
+| **86-90** | Porta di energia elementale; passandoci si prendono 3d8 | Il danno **viene tirato** e scritto (`Passing through costs N damage.`). Sulla mappa è una porta chiusa. |
+| **91-95** | Porta di pietra pesante, Atletica DC 16 | `Forcing it open` DC 16. Il "-1 hp ogni 2 fallimenti" resta testo. |
+| **96-100** | Porta sfondata e fuori dai cardini | Nessuna prova. **Ancora una porta chiusa sul disegno**, anche se il testo dice il contrario. |
+
+## Da indagare
+
+Tre righe (26-30 "empty doorway", 51-55 "empty archway, no door", 96-100
+"smashed and hanging off its hinges") descrivono una soglia **senza** un
+battente, e vengono disegnate con il glifo di porta chiusa come tutte le altre.
+Il glifo di porta *aperta* di dungeongen non è utilizzabile così com'è, perché
+una porta aperta fonde le due regioni e cancella il muro. La strada
+praticabile è la stessa usata per le scale: **dipingere l'apertura sopra il
+muro** a `Layers.OVERLAY` senza contornarla. Non è fatto.
