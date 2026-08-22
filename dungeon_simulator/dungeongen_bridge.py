@@ -865,6 +865,187 @@ def _alcove_cell_of(element, alcove_cells):
     return cell if cell in alcove_cells else None
 
 
+def _door_sides(element, cell, cell_size):
+    """Where a door's two neighbours sit relative to its own cell.
+
+    Returns `("wall", side, far)` when the door is on a wall - the cell is one
+    of the two elements' own, and `side` is the edge of it facing the other,
+    which is `far`. Returns `("cell", None, None)` when the door has a cell of
+    its own between the two, which is dungeongen's own arrangement. Returns
+    None when neither can be established.
+
+    Read off the geometry rather than off the door. Its `direction` comes from
+    `_door_direction`, which measures from one room's centre and does not
+    survive a link whose two ends belong to different rooms; its
+    `orientation` is reliable but gives only the axis. And "which element owns
+    this cell" cannot be asked with `shape.contains` alone: dungeongen's
+    passages exclude the cells their doors sit on, so on a third of them
+    neither neighbour covers the cell even though one of them is right up
+    against it."""
+    vertical = hasattr(element, "_top_group")  # halves top/bottom: a N or S wall
+    lo_cell = (cell[1] if vertical else cell[0]) * cell_size
+    hi_cell = lo_cell + cell_size
+    tolerance = cell_size * 0.1
+
+    def where(other):
+        bounds = other.bounds
+        low = bounds.y if vertical else bounds.x
+        high = low + (bounds.height if vertical else bounds.width)
+        if high <= lo_cell + tolerance:
+            return "N" if vertical else "W"
+        if low >= hi_cell - tolerance:
+            return "S" if vertical else "E"
+        return None  # reaches across the cell: this one owns it
+
+    placed = [(where(other), other) for other in element.connections]
+    outside = [(side, other) for side, other in placed if side is not None]
+    if len(outside) == 1:
+        return "wall", outside[0][0], outside[0][1]
+    if len(outside) == 2 and outside[0][0] != outside[1][0]:
+        return "cell", None, None
+    return None
+
+
+def _wall_band(cell, side, cell_size, span, reach):
+    """A rectangle straddling one edge of a cell: `span` long along the wall,
+    `reach` deep on each side of it. Returns (whole, near, far), `far` being
+    the half on the other side of the wall from the cell."""
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle
+    x0, y0 = cell[0] * cell_size, cell[1] * cell_size
+    inset = (cell_size - span) / 2
+    if side in ("E", "W"):
+        line = x0 + cell_size if side == "E" else x0
+        whole = _Rectangle(line - reach, y0 + inset, 2 * reach, span)
+        low = _Rectangle(line - reach, y0 + inset, reach, span)
+        high = _Rectangle(line, y0 + inset, reach, span)
+        near, far = (low, high) if side == "E" else (high, low)
+    else:
+        line = y0 + cell_size if side == "S" else y0
+        whole = _Rectangle(x0 + inset, line - reach, span, 2 * reach)
+        low = _Rectangle(x0 + inset, line - reach, span, reach)
+        high = _Rectangle(x0 + inset, line, span, reach)
+        near, far = (low, high) if side == "S" else (high, low)
+    return whole, near, far
+
+
+def _doorway_through_cell(cell, vertical, cell_size, span, reach):
+    """A rectangle crossing a door's own cell from one wall to the other,
+    `span` wide and lapping `reach` into the element at each end."""
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle
+    x0, y0 = cell[0] * cell_size, cell[1] * cell_size
+    inset = (cell_size - span) / 2
+    if vertical:
+        return _Rectangle(x0 + inset, y0 - reach, span, cell_size + 2 * reach)
+    return _Rectangle(x0 - reach, y0 + inset, cell_size + 2 * reach, span)
+
+
+def _square_off_doors(dg_map, dg_dungeon, island) -> None:
+    """Draw every door the same way: a plain rectangle, on the wall.
+
+    dungeongen builds a door out of two rounded chips - one handed to the
+    element on each side - plus a leaf drawn in the middle of the door's own
+    cell. That is right for its own layout, where a door *has* a cell of its
+    own between the two things it joins: each chip reaches from the middle of
+    that cell out to one of its two walls, poking `DOOR_SIDE_EXTENSION` (8px)
+    past it, and the leaf in the middle of the cell is in the middle of the
+    doorway.
+
+    Ours mostly do not have a cell. A door of ours sits on the wall, so the
+    cell it is placed on is one of the two it joins, and both chips land
+    inside it. The chip handed to the element across the wall then reaches
+    *half a cell* into a region that is not its own and is outlined there -
+    the rounded box hanging off the wall - with the leaf floating in the
+    middle of it, half a cell off the wall it belongs to. Measured over 12
+    seeds: 108 of 108 such doors, and every leaf 0.50 of a cell off.
+
+    Both cases are squared off here:
+
+    - **on a wall**: a rectangle straddling it, of which each side gets only
+      its own half. That is dungeongen's own contract - `_left_group` and
+      `_right_group` are halves, not the whole shape - and it is what keeps
+      two regions meeting exactly on the line with neither protruding. Each
+      half lies inside the floor it is given to, so nothing is outlined. The
+      leaf is then drawn *on* the wall: filled in `room_color` over it, which
+      is how dungeongen's own glyph opens the way through, then stroked.
+    - **with a cell of its own**: the doorway is that cell, and both sides get
+      the *same* rectangle crossing it. Handing the whole shape to both is
+      wrong on a wall (it is what made our stairs alcove grow a box) but right
+      here: the two outlines coincide exactly, so the doorway reads as one
+      rectangle rather than two halves with a seam down the middle. The leaf
+      stays where dungeongen puts it, which for this case is already the
+      middle of the doorway.
+
+    A **secret** door draws nothing at all. It goes over closed so the wall it
+    hides in survives (`_door_kind`), but dungeongen was then drawing its leaf
+    on that wall like any other door - a secret door with a door plainly drawn
+    in it. The overlay's "S" is the only mark it should get.
+
+    A door whose neighbours cannot be placed keeps dungeongen's own drawing:
+    4 of 145 over the same sweep, all of them a door sitting inside a single
+    element, where there is no wall to speak of."""
+    from dungeongen.map.door import Door as _MapDoor
+    from dungeongen.map.enums import Layers as _Layers
+    from dungeongen.graphics.shapes import ShapeGroup as _ShapeGroup
+    from dungeongen.constants import CELL_SIZE
+    import skia as _skia
+
+    off_x = -dg_dungeon.bounds[0] if dg_dungeon.rooms else 0
+    off_y = -dg_dungeon.bounds[1] if dg_dungeon.rooms else 0
+    secret_cells = {
+        (cx + off_x, cy + off_y)
+        for door in island.get("doors", []) if door.get("secret")
+        for cx, cy in door_cells(door)
+    }
+
+    span = CELL_SIZE * 0.6      # dungeongen's own doorway width
+    reach = CELL_SIZE * 0.2     # into the floor either side, where it is absorbed
+
+    for element in dg_map._elements:
+        if not isinstance(element, _MapDoor):
+            continue
+        cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
+        placed = _door_sides(element, cell, CELL_SIZE)
+        if placed is None:
+            continue
+        kind, side, far = placed
+        secret = cell in secret_cells
+
+        if kind == "cell":
+            through = _doorway_through_cell(
+                cell, hasattr(element, "_top_group"), CELL_SIZE, span,
+                dg_map.options.border_width)
+            element.get_side_shape = (
+                lambda connected, _c=_ShapeGroup(includes=[through], excludes=[]): _c)
+            if secret:
+                element.draw = lambda *args, **kwargs: None
+            continue
+
+        _, near, far_half = _wall_band(cell, side, CELL_SIZE, span, reach)
+        element.get_side_shape = (
+            lambda connected, _n=near, _f=far_half, _a=far:
+            _ShapeGroup(includes=[_f if connected is _a else _n], excludes=[]))
+
+        if secret:
+            element.draw = lambda *args, **kwargs: None
+            continue
+
+        leaf, _, _ = _wall_band(cell, side, CELL_SIZE, span,
+                                dg_map.options.border_width)
+
+        def draw(canvas, layer=None, _leaf=leaf, _map=dg_map):
+            if layer is not _Layers.OVERLAY:
+                return
+            _leaf.draw(canvas, _skia.Paint(AntiAlias=True,
+                                           Style=_skia.Paint.kFill_Style,
+                                           Color=_map.options.room_color))
+            _leaf.draw(canvas, _skia.Paint(AntiAlias=True,
+                                           Style=_skia.Paint.kStroke_Style,
+                                           StrokeWidth=_map.options.door_stroke_width,
+                                           Color=_map.options.border_color))
+
+        element.draw = draw
+
+
 def _quieten_stair_alcoves(dg_map, dg_dungeon) -> None:
     """Fix up the one-cell rooms the stairs are drawn in.
 
@@ -1204,6 +1385,7 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
             dg_dungeon = build_dungeongen_dungeon(island)
     with _region_inflation():
         dg_map = _convert_dungeon(dg_dungeon, show_numbers=False)
+        _square_off_doors(dg_map, dg_dungeon, island)
         _quieten_stair_alcoves(dg_map, dg_dungeon)
         bounds = dg_map.bounds
         pad_x, pad_y = grid_to_map(

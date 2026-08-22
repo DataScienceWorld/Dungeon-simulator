@@ -43,9 +43,11 @@ measurement that was quietly answering a different question.
 - **Don't draw debug marks on the thing being measured.** A dashed rectangle
   outlining a cell lands exactly on that cell's edges; the scan then measures
   the overlay. Render twice - once clean to measure, once marked to look at.
-- **Don't diff two renders to isolate one element.** Changing what is handed
-  over shifts dungeongen's decorative RNG, so the difference covers the whole
-  window rather than the one shape.
+- **Don't diff two renders to isolate one element** - and don't diff two
+  renders at all. The same island rendered twice by the same code, in two
+  processes, comes out different: props change shape, decoration moves. Only
+  the geometry - walls, regions, chips, the rectangles a glyph draws - is
+  reproducible. Measure that, or scan a wall line, never the ornament.
 - **Don't probe a region's shape to ask "is this side open".** See
   `REGION_INFLATE` below - it used to answer yes on all four sides of
   everything. That probe is trustworthy now, but only because the inflation is
@@ -143,6 +145,10 @@ both 6.0px, both centred exactly on the grid line.
 
 - **Remember there are exactly two chip providers**: `Door.get_side_shape` and
   `Exit.get_side_shape`. Nothing else opens a wall.
+- **Draw a secret door as nothing at all.** Closed keeps its wall, which is
+  the point - but closed also means dungeongen draws a leaf on that wall, so a
+  secret door was rendering with a door plainly drawn in it. Its `draw` is
+  silenced and the overlay's "S" is the only mark.
 - **Hand a secret door over as `CLOSED`.** The webview adapter folds
   `DoorType.SECRET` into `OPEN`, and an open door is not a glyph, it is a hole
   - it merges the regions and erases the wall the secret is hidden in. The
@@ -168,9 +174,26 @@ both 6.0px, both centred exactly on the grid line.
   wall. It was announcing the way out on top of secret entrances.
 - **Don't put a door or exit on a cell you need as corridor floor.** Passages
   exclude cells occupied by doors or exits - the corridor there disappears.
-- **Don't return a whole chip from `get_side_shape`.** dungeongen returns only
-  the half on the connected element's side, which is how two regions meet
-  exactly on the line with neither protruding.
+- **Don't return a whole chip from `get_side_shape`** *on a wall*. dungeongen
+  returns only the half on the connected element's side, which is how two
+  regions meet exactly on the line with neither protruding. The exception is a
+  door with a cell of its own: there the doorway *is* the cell, and handing
+  both sides the same rectangle makes their outlines coincide instead of
+  leaving a seam down the middle of it (`_square_off_doors`).
+- **Don't assume a door's chip is where the door is.** dungeongen builds both
+  halves inside the door's *own cell*, reaching from its middle out to each of
+  its two walls, and draws the leaf in the middle of that cell. Right when a
+  door has a cell to itself; ours sit on the wall and take none, so the half
+  handed across reached half a cell into the wrong region and was outlined
+  there - a rounded box on the wall with the leaf floating in it, 0.50 of a
+  cell off. 117 of 117 wall-doors over 12 seeds.
+- **Don't work out which wall a door is in from the door.** `direction` comes
+  from `_door_direction`, which measures from one room's centre and does not
+  survive a link whose two ends belong to different rooms; `orientation` is
+  reliable but gives only the axis. And `shape.contains` is not enough to ask
+  who owns the cell: dungeongen's passages *exclude* the cells their doors sit
+  on, so a third of them are covered by neither neighbour. `_door_sides` reads
+  the two neighbours' boxes on the orientation's axis instead.
 
 ### Worth knowing
 

@@ -946,6 +946,7 @@ def _alcove_edge_ink(island):
     built = bridge.build_dungeongen_dungeon(island)
     with bridge._region_inflation():
         dg_map = bridge._convert_dungeon(built, show_numbers=False)
+        bridge._square_off_doors(dg_map, built, island)
         bridge._quieten_stair_alcoves(dg_map, built)
         for element in dg_map._elements:
             for prop in list(getattr(element, "props", [])):
@@ -1172,3 +1173,169 @@ def test_without_region_inflation_an_alcove_measures_like_a_closed_square():
             "the inflation was left swapped after the render"
         )
     assert checked > 20, f"expected plenty of alcoves, found {checked}"
+
+
+class _RecordingCanvas:
+    """A canvas that only remembers the rectangles drawn on it.
+
+    Enough for `Door.draw`, which draws one `Rectangle` and nothing else, and
+    it keeps the door's glyph measurable without rendering a page."""
+
+    def __init__(self):
+        self.rects = []
+
+    def drawRect(self, rect, paint):
+        self.rects.append((rect.x(), rect.y(), rect.width(), rect.height()))
+
+    def drawRRect(self, rrect, paint):
+        rect = rrect.rect()
+        self.rects.append((rect.x(), rect.y(), rect.width(), rect.height()))
+
+
+def _doors_on_walls(island):
+    """Every door of this island that sits on a wall, with the wall it sits in.
+
+    Yields (element, cell, side, far, secret) after the real drawing passes
+    have run, in the order `render_island_svg` runs them."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.door import Door as _MapDoor
+
+    built = bridge.build_dungeongen_dungeon(island)
+    with bridge._region_inflation():
+        dg_map = bridge._convert_dungeon(built, show_numbers=False)
+        bridge._square_off_doors(dg_map, built, island)
+        bridge._quieten_stair_alcoves(dg_map, built)
+        off_x = -built.bounds[0] if built.rooms else 0
+        off_y = -built.bounds[1] if built.rooms else 0
+        secret_cells = {
+            (cx + off_x, cy + off_y)
+            for door in island.get("doors", []) if door.get("secret")
+            for cx, cy in bridge.door_cells(door)
+        }
+        # A stairs alcove's door is not one of these. `_quieten_stair_alcoves`
+        # takes it over afterwards and paints the doorway itself, on the side
+        # the alcove opens through - see the alcove's own tests.
+        alcoves = {(stair.x + off_x, stair.y + off_y)
+                   for stair in built.stairs.values()}
+        for element in dg_map._elements:
+            if not isinstance(element, _MapDoor):
+                continue
+            cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
+            if cell in alcoves:
+                continue
+            placed = bridge._door_sides(element, cell, CELL_SIZE)
+            if placed is None or placed[0] != "wall":
+                continue
+            yield element, cell, placed[1], placed[2], cell in secret_cells
+
+
+def test_a_doors_chip_stays_on_its_own_side_of_the_wall():
+    """Neither half of a door may reach back across the wall it sits in.
+
+    dungeongen hands each side a chip that runs from the middle of the door's
+    *own cell* out to one of its walls. That is right where a door has a cell
+    to itself; ours sit on the wall and take no cell, so the chip handed to
+    the element across the wall reached half a cell into a region that is not
+    its own - and a region outlines whatever it owns, so it came out as a
+    rounded box hanging off the wall with the leaf floating in the middle of
+    it. 117 of 117 wall-doors over 12 seeds, every one reaching the full 0.50
+    of a cell.
+
+    Measured on the shapes rather than the render: dungeongen's decoration is
+    not reproducible from one process to the next (see LESSONS.md), but its
+    geometry is."""
+    from dungeongen.constants import CELL_SIZE
+
+    checked = 0
+    for seed in range(12):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not bridge.fits_size_limit(island):
+                    continue
+                for element, cell, side, far, _ in _doors_on_walls(island):
+                    bounds = element.get_side_shape(far).bounds
+                    x0, y0 = cell[0] * CELL_SIZE, cell[1] * CELL_SIZE
+                    back = {
+                        "E": (x0 + CELL_SIZE) - bounds.x,
+                        "W": (bounds.x + bounds.width) - x0,
+                        "S": (y0 + CELL_SIZE) - bounds.y,
+                        "N": (bounds.y + bounds.height) - y0,
+                    }[side]
+                    assert back <= 0.01 * CELL_SIZE, (
+                        f"seed {seed}: the door at {cell} hands the element past its "
+                        f"{side} wall a chip reaching {back / CELL_SIZE:.2f} of a cell "
+                        f"back across it - that is the box that gets outlined"
+                    )
+                    checked += 1
+    assert checked > 60, f"expected plenty of doors on walls, found {checked}"
+
+
+def test_a_doors_glyph_is_drawn_on_the_wall_it_sits_in():
+    """And centred on it, not half a cell away.
+
+    dungeongen draws the leaf in the middle of the door's own cell, which for
+    a door of ours is the middle of the corridor beside the wall. Measured
+    over the same 12 seeds: every one of 95 leaves sat 0.50 of a cell off."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.enums import Layers
+
+    checked = 0
+    for seed in range(12):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not bridge.fits_size_limit(island):
+                    continue
+                for element, cell, side, _far, secret in _doors_on_walls(island):
+                    if secret:
+                        continue
+                    canvas = _RecordingCanvas()
+                    element.draw(canvas, Layers.OVERLAY)
+                    assert canvas.rects, (
+                        f"seed {seed}: the door at {cell} draws nothing at all"
+                    )
+                    x, y, w, h = canvas.rects[0]
+                    along_y = side in ("N", "S")
+                    middle = (y + h / 2) if along_y else (x + w / 2)
+                    wall = {"N": cell[1], "S": cell[1] + 1,
+                            "W": cell[0], "E": cell[0] + 1}[side] * CELL_SIZE
+                    assert abs(middle - wall) <= 0.01 * CELL_SIZE, (
+                        f"seed {seed}: the door at {cell} draws its leaf "
+                        f"{abs(middle - wall) / CELL_SIZE:.2f} of a cell off the "
+                        f"{side} wall it sits in"
+                    )
+                    checked += 1
+    assert checked > 60, f"expected plenty of doors on walls, found {checked}"
+
+
+def test_a_secret_door_has_no_door_drawn_in_it():
+    """The whole point of a secret door is that the wall looks untouched.
+
+    It goes over to dungeongen *closed* so the wall survives - handing over
+    its real type folds to OPEN in the webview adapter, which is a hole, not a
+    glyph (`_door_kind`). But closed still means dungeongen draws a door leaf
+    on that wall, so a secret door was rendering with a door plainly drawn in
+    it, and the overlay's "S" went on top of that. Nothing is drawn now."""
+    from dungeongen.map.enums import Layers
+
+    checked = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not bridge.fits_size_limit(island):
+                    continue
+                if not any(door.get("secret") for door in island["doors"]):
+                    continue
+                for element, cell, _side, _far, secret in _doors_on_walls(island):
+                    if not secret:
+                        continue
+                    canvas = _RecordingCanvas()
+                    element.draw(canvas, Layers.OVERLAY)
+                    assert not canvas.rects, (
+                        f"seed {seed}: the secret door at {cell} draws a door glyph "
+                        f"in the wall it is supposed to be hidden in"
+                    )
+                    checked += 1
+    assert checked > 3, f"expected a few secret doors, found {checked}"

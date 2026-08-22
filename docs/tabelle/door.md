@@ -29,10 +29,32 @@ sempre lo stesso, e dipende da una sola cosa: se la porta è segreta o no.
   `OPEN`, cioè su un buco: consegnare onestamente una porta segreta la
   trasformava nell'unica cosa che una porta segreta non deve essere,
   un'apertura.
-- **Porta normale**: glifo di porta chiusa di dungeongen + un rettangolo
-  invisibile per il tooltip con tutto il testo della voce.
-- **Porta segreta** (`beyond == "secret"`): il muro **resta intero**, e sopra ci
-  va il marchio **"S"** dell'overlay, con tooltip `Porta segreta. <testo>`.
+- **Porta normale**: un **rettangolo disegnato sul muro** - riempito di bianco
+  sopra il bordo, come fa il glifo di dungeongen per aprire il passaggio, e poi
+  contornato - largo il 60% della cella e profondo un `border_width` per lato
+  della linea. Più un rettangolo invisibile per il tooltip con tutto il testo
+  della voce.
+
+  Non è quello che disegnava dungeongen. Il suo glifo è costruito su una porta
+  che ha **una cella tutta sua** fra le due cose che collega: i due "chip" di
+  pavimento vanno dal centro di quella cella fino ai suoi due muri, e l'anta
+  sta al centro, cioè in mezzo alla soglia. Le nostre porte stanno *sul muro* e
+  non hanno cella, quindi entrambi i chip finivano dentro la cella del
+  corridoio: quello dato all'elemento dall'altra parte del muro rientrava di
+  **mezza cella** in una regione non sua e veniva contornato lì - la scatola
+  arrotondata appiccicata al muro, con l'anta che galleggiava dentro, mezza
+  cella lontano dal muro a cui appartiene. Misurato su 12 seed: 117 porte su
+  117, e ogni anta a 0.50 celle dal muro. Ora 0 e 0
+  (`_square_off_doors`).
+- **Porta con una cella propria** (24 su 145 nella stessa misura, dove il
+  corridoio non copre la cella): la soglia *è* quella cella, e il chip diventa
+  un rettangolo che la attraversa, dato **intero a entrambi i lati** così i due
+  contorni coincidono invece di lasciare una cucitura in mezzo. L'anta resta
+  dove la mette dungeongen, che in questo caso è già il centro della soglia.
+- **Porta segreta** (`beyond == "secret"`): il muro **resta intero** e **non
+  viene disegnata nessuna anta**. Prima ne veniva disegnata una: la porta
+  segreta si vedeva come una porta qualsiasi, con la "S" sopra. Ora l'unico
+  segno è il marchio **"S"** dell'overlay, con tooltip `Porta segreta. <testo>`.
 
 ## I risultati
 
@@ -62,8 +84,10 @@ stanza), `d4_passage_room` (d4 1 passaggio, altrimenti stanza).
 
 Tre righe (26-30 "empty doorway", 51-55 "empty archway, no door", 96-100
 "smashed and hanging off its hinges") descrivono una soglia **senza** un
-battente, e vengono disegnate con il glifo di porta chiusa come tutte le altre.
+battente, e vengono disegnate con il rettangolo di porta come tutte le altre.
 Il glifo di porta *aperta* di dungeongen non è utilizzabile così com'è, perché
-una porta aperta fonde le due regioni e cancella il muro. La strada
-praticabile è la stessa usata per le scale: **dipingere l'apertura sopra il
-muro** a `Layers.OVERLAY` senza contornarla. Non è fatto.
+una porta aperta fonde le due regioni e cancella il muro. La strada praticabile
+è ormai a un passo: `_square_off_doors` già riempie di bianco sopra il muro e
+poi contorna: per una soglia vuota basta **non contornare**, esattamente come
+per l'apertura dell'alcova delle scale. Non è fatto perché va deciso prima se
+la distinzione si legge, a questa scala.
