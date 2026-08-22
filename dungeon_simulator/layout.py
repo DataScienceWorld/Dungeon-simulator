@@ -497,8 +497,46 @@ class _Layout:
         island["is_entrance"] = True
         self._walk(node, 0.0, 0.0, "N", node.level, island, _Path(None, (0.0, 0.0)))
 
+    def _land_stairs(self, island: dict, arrival: dict) -> tuple:
+        """Put the other end of a flight of stairs on the level it arrives at.
+
+        A staircase used to exist only where it was rolled: the level below
+        got an island whose origin was marked "Arrivo" and nothing else, so
+        there was no way to tell you had come down a stair, let alone which
+        one. The flight has two ends and both are on a map.
+
+        Built exactly like the departure end - a one-cell corridor so the
+        steps have a floor, then a stairs record the bridge turns into an
+        alcove with a real staircase in it - and returns the point the walk
+        carries on from, which is the far side of that cell."""
+        dx, dy = _VECTORS["N"]
+        nx, ny = dx, dy
+        island["corridors"].append({
+            "id": f"stairs{arrival['id']}", "points": [(0.0, 0.0), (nx, ny)],
+            "width": _cells(DEFAULT_PASSAGE_WIDTH_FT), "cells": set(), "lines": [],
+        })
+        island["_route_cells"] |= _segment_cells((0.0, 0.0), (nx, ny))
+        cx = (nx - 1 if nx > 0 else nx) if dx else 0
+        cy = (ny - 1 if ny > 0 else ny) if dy else 0
+        # The way *on*, not the way back: an arrival stair is entered from the
+        # steps and left towards whatever the walk does next, so the alcove's
+        # one opening has to face that way. Everywhere else the takeoff is the
+        # cell behind.
+        island["_takeoff"][f"stairs{arrival['id']}"] = (int(cx + dx), int(cy + dy))
+        island["stairs"].append({
+            "id": arrival["id"], "x": nx, "y": ny,
+            "cell_x": int(cx), "cell_y": int(cy),
+            # Going back up the way you came down, so the steps face the other
+            # way from the end that was rolled.
+            "delta": -arrival["delta"], "to_level": arrival["from_level"],
+            "to_id": arrival["id"], "to_kind": "stairs", "heading": "N",
+            "arrival": True,
+            "lines": arrival["lines"],
+        })
+        return nx, ny
+
     def _enter(self, child, x: float, y: float, heading: str, level: int, island: dict,
-               force_new_island: bool, path: "_Path"):
+               force_new_island: bool, path: "_Path", arrival: dict | None = None):
         """Walk into `child`, starting it at (x, y) facing `heading`. Crossing
         into a new island (a different level, or an explicit portal jump) starts
         that island at its own origin instead.
@@ -512,7 +550,11 @@ class _Layout:
         as an entry point is what drew diagonals across the map."""
         if force_new_island or child.level != level:
             new_island = self._add_island(child.level)
-            self._walk(child, 0.0, 0.0, "N", child.level, new_island, _Path(None, (0.0, 0.0)))
+            start = (0.0, 0.0)
+            if arrival is not None:
+                start = self._land_stairs(new_island, arrival)
+            self._walk(child, start[0], start[1], "N", child.level, new_island,
+                       _Path(None, start))
             return x, y
         return self._walk(child, x, y, heading, level, island, path)
 
@@ -620,7 +662,10 @@ class _Layout:
                 "lines": node.lines,
             })
             for child in node.children:
-                self._enter(child, nx, ny, heading, level, island, True, path)
+                self._enter(child, nx, ny, heading, level, island, True, path,
+                            arrival={"id": node.id, "from_level": level,
+                                     "delta": node.geo.get("level_delta", 0),
+                                     "lines": node.lines})
             return x, y
         if kind in ("edge", "dead_end"):
             # A branch taken off a T-junction/four-way intersection that

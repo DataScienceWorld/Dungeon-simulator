@@ -440,7 +440,10 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
         level = stair.get("to_level")
         # A destination that was never generated (its branch was cut) leaves
         # the level on its own rather than an invented number.
-        note = (f"{stair['to_id']} L{level}" if stair.get("to_id") is not None
+        # An arrival end says where you came *from*, so it reads the other
+        # way round: "(da 23 L1)" against the departure's "(23 L2)".
+        prefix = "da " if stair.get("arrival") else ""
+        note = (f"{prefix}{stair['to_id']} L{level}" if stair.get("to_id") is not None
                 else f"L{level}")
         half = max(scale * 0.5, 16.0)
         parts.append(

@@ -505,6 +505,37 @@ Da stabilire prima di scriverlo:
   figli vanno tagliati come in ogni altra fermata - a meno che "fondersi" non
   voglia dire che si prosegue *dentro* l'altro corridoio.
 
+## 8c. Una svolta dovrebbe essere una L da 3 celle, e la conversione in celle non lo permette
+
+Chiesto: le righe 4 e 5 della [Passage Table](docs/tabelle/passage.md) - *"turns
+left/right 90 degrees"*, che non danno lunghezza propria - dovrebbero disegnarsi
+come una **L di tre celle (30ft)**. Oggi una svolta senza lunghezza propria
+esce cosi', misurata su 40 seed contando le celle che dungeongen riceve
+davvero: **1 cella 7 volte, 2 celle 23, 3 celle 22, 4 celle 11, 6 celle 1**, e
+5 passaggi ridotti a un punto solo.
+
+Allungare il braccio prima dell'angolo non basta, ed e' stato provato: il
+problema e' che il numero di celle di un braccio **dipende dal verso**, per la
+convenzione "la cella e' il quadrato *dopo* la linea" (`_segment_cells`). Con
+un braccio da 1 e uno da 2, in lattice:
+
+| svolta | celle ottenute | quante |
+|---|---|---|
+| E->S | (0,0) (1,0) (1,1) | 3 |
+| E->N | (0,0) (1,0) (1,-1) (1,-2) | 4 |
+| W->S | (-1,0) (-1,1) | 2 |
+| N->E | (0,-1) (1,-1) | 2 |
+
+Contigue lo sono tutte, ma la stessa camminata da' da 2 a 4 celle a seconda di
+dove e' rivolta. E con 2 celle prima e 1 dopo va peggio: E->S da' tre celle
+**in fila** (il braccio dopo la svolta cade nella stessa riga, quindi la L non
+si vede affatto) e E->N ne da' quattro con un salto in diagonale.
+
+Per una L uniforme i due bracci vanno calcolati **in celle** e non in punti di
+lattice, compensando il verso come gia' si fa per il passaggio d'accesso delle
+scale (`step_x < 0` in `build_dungeongen_dungeon`). Va fatto li', non
+allungando il minimo.
+
 ## 9. Cose che le tabelle dicono e la mappa non sa dire
 
 Un inventario, tabella per tabella, di ogni risultato che produce qualcosa di

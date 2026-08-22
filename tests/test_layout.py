@@ -551,7 +551,8 @@ def test_stairs_stand_on_a_corridor_cell_of_their_own():
 def test_stairs_say_where_they_come_out():
     """The marker's whole job is telling you where the steps lead, so it
     carries the destination node - the room or passage you arrive in - and not
-    just the level. A stairs node has exactly one child, which is that
+    just the level. About the *departure* end of a flight; the arrival end has
+    its own test. A stairs node has exactly one child, which is that
     destination; the only case with none is a branch the generator cut, and
     the note falls back to the level alone there rather than inventing one."""
     checked = 0
@@ -566,6 +567,12 @@ def test_stairs_say_where_they_come_out():
         for islands in compute_layout(dungeon).values():
             for island in islands:
                 for stair in island["stairs"]:
+                    if stair.get("arrival"):
+                        # The far end of a flight, which points back at the
+                        # end it came from rather than on to a destination -
+                        # `test_a_flight_of_stairs_has_both_its_ends_on_a_map`
+                        # is the one that checks those.
+                        continue
                     node = by_id[stair["id"]]
                     if not node.children:
                         assert stair["to_id"] is None
@@ -742,3 +749,50 @@ def test_a_passage_that_opens_by_widening_is_wide_from_its_first_cell():
                     )
                     single += 1
     assert single > 40, f"expected plenty of passages that open by widening, found {single}"
+
+
+def test_a_flight_of_stairs_has_both_its_ends_on_a_map():
+    """A staircase used to exist only where it was rolled.
+
+    The level it led to got an island whose origin was marked "Arrivo" and
+    nothing else: no steps, and no way to tell which stair you had come down.
+    A flight has two ends and both are on a map now - the arrival one built
+    like the departure one, a cell of corridor and a stairs record the bridge
+    turns into an alcove with a real staircase in it, and pointing back at the
+    end it came from. Over 20 seeds: 118 departures, 118 arrivals."""
+    departures = arrivals = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        landed = {}
+        for level, islands in layout.items():
+            for island in islands:
+                for stair in island["stairs"]:
+                    if stair.get("arrival"):
+                        landed.setdefault(stair["id"], []).append((level, stair))
+                        arrivals += 1
+        for level, islands in layout.items():
+            for island in islands:
+                for stair in island["stairs"]:
+                    if stair.get("arrival"):
+                        continue
+                    departures += 1
+                    # A flight whose far end was never explored - the branch
+                    # was cut, or the budget ran out - has nothing to land on.
+                    for arrival_level, arrival in landed.get(stair["id"], []):
+                        assert arrival_level != level, (
+                            f"seed {seed}: stairs #{stair['id']} land on the level they "
+                            f"leave from"
+                        )
+                        assert arrival["to_level"] == level, (
+                            f"seed {seed}: stairs #{stair['id']} arrive saying they come "
+                            f"from L{arrival['to_level']} instead of L{level}"
+                        )
+                        assert arrival["delta"] == -stair["delta"], (
+                            f"seed {seed}: stairs #{stair['id']} go {stair['delta']} and "
+                            f"their far end goes {arrival['delta']} - it should be the "
+                            f"way back"
+                        )
+    assert departures > 40 and arrivals > 40, (
+        f"partenze {departures}, arrivi {arrivals}"
+    )

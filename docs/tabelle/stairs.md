@@ -26,6 +26,15 @@ e in cosa si sbuca). Il disegno è sempre lo stesso:
 - Sopra la cella l'overlay scrive la nota **`(<id destinazione> L<livello>)`** -
   in che stanza/passaggio si sbuca e a che livello - più un rettangolo
   invisibile per il tooltip.
+- **Sul livello di arrivo c'è l'altra estremità della rampa**, costruita allo
+  stesso modo: una cella di corridoio, un'alcova, una scala vera, e la nota
+  **`(da <id scala> L<livello di partenza>)`** - così si capisce da dove si
+  arriva. I gradini guardano dalla parte opposta, perché risalire vuol dire
+  tornare indietro. Prima il livello di arrivo aveva solo il cerchio "Arrivo"
+  sull'origine dell'isola e nient'altro: nessun gradino, e nessun modo di
+  sapere da quale scala si fosse scesi. Su 20 seed: 118 partenze, 118 arrivi.
+  L'unica apertura dell'alcova d'arrivo guarda **avanti**, verso dove prosegue
+  la camminata, non indietro come in tutte le altre.
 - Se la cella dell'alcova cade dentro una stanza già disegnata **l'alcova non
   viene creata** (sarebbero due stanze sovrapposte); la scala viene comunque
   consegnata e i gradini si disegnano lo stesso. Idem se due scale finiscono
