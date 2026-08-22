@@ -536,9 +536,27 @@ misura dopo, e un test che fallisca senza la modifica.
 
 ### Passage Table
 
-- **(C) "Narrows to 5 ft" (15).** Invisibile: un corridoio è già largo una
-  cella e sotto non si può andare. È la conseguenza diretta della regola dei
-  10ft, quindi o si accetta o si segna la strettoia con un simbolo.
+- **(B) Un corridoio allargato non si può disegnare come corridoio.** La riga
+  16 tira `(1d6÷2)×10`, minimo 10ft, quindi 20 o 30 ft in poco meno della metà
+  dei casi, e la larghezza resta valida da lì in poi (ora la portiamo avanti
+  anche oltre un bivio, giù per la via che tira dritto). Ma
+  `dungeongen/map/passage.py` rifiuta con un `ValueError` qualunque passaggio
+  che non sia esattamente una cella - *"Passage must be exactly one cell
+  wide"* - e il suo adattatore non legge nemmeno il campo `width` del modello
+  di layout. Oggi la larghezza si vede solo nel ripiego RoughJS, che la disegna
+  davvero, e mai nell'arte di dungeongen, che è quella che si usa sempre: su 20
+  seed sono **71 tratti larghi** (47 da 2 celle, 24 da 3) disegnati stretti.
+
+  L'unica strada è consegnare il tratto largo come una **stanza** - un
+  rettangolo w×h - come già si fa con l'alcova delle scale. Il precedente
+  esiste, e con lui i suoi problemi: la stanza è una regione a sé, quindi
+  servono aperture vere ai due capi (altrimenti è una scatola sigillata, che è
+  esattamente come l'alcova era nata), va spenta la decorazione d'angolo, e va
+  visto cosa ne fanno `_claim_takeoff_cell` e la logica degli incroci.
+- **(C) "Narrows to 5 ft" (15).** Invisibile in ogni caso: un corridoio è già
+  largo una cella e sotto non si può andare. È la conseguenza diretta della
+  regola dei 10ft, quindi o si accetta o si segna la strettoia con un
+  simbolo.
 - **(A) L'apertura nel pavimento (19).** Sul livello di partenza **non c'è
   alcun segno**: né il buco, né la trappola, né la botola. La caduta porta a
   un'isola su un'altra tavola e questa non dice che di lì si scende. Le scale

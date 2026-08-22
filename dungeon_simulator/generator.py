@@ -342,6 +342,21 @@ class DungeonGenerator:
         node.kind = "passage"
         events = node.geo.setdefault("events", [])
         segments = 0
+        # A "widens"/"narrows" roll changes the passage from that point on, and
+        # a passage that forks keeps its width down the way that carries
+        # straight on - that is the same corridor, and the roll said the
+        # *passage* is that wide, not that stretch of it. Carried in `geo` and
+        # said out loud, because a reader looking at a corridor twice the
+        # normal width has to be able to find the roll that made it so, and
+        # that roll is in another entry.
+        # Note the key is shared with a room's own rolled size (`_fill_room`
+        # writes its width there too). Only ever set on a child dispatched as
+        # a passage, so the two cannot collide.
+        carried_width = node.geo.get("width_ft")
+        if carried_width is not None:
+            node.lines.append(
+                f"This passage is {carried_width} ft wide here, carried on from the "
+                f"roll that changed it.")
         while True:
             value, entry = PASSAGE_TABLE.roll(self.dice)
             payload = entry.payload
@@ -371,6 +386,7 @@ class DungeonGenerator:
                 events.append({"type": "turn", "dir": payload["turn"]})
             if width_ft is not None:
                 events.append({"type": "resize", "width_ft": width_ft})
+                carried_width = width_ft
 
             if tag == "continue":
                 segments += 1
@@ -420,8 +436,14 @@ class DungeonGenerator:
                     branch_dirs = ["left", "right", None]
                 for branch_dir in branch_dirs:
                     child = self.dispatch_beyond("passage", level, depth=depth + 1)
+                    # Straight on is this same corridor; a branch that turns is
+                    # a new one, at the ordinary width.
+                    carries_on = branch_dir is None
+                    if carries_on and carried_width is not None:
+                        child.geo["width_ft"] = carried_width
                     node.children.append(child)
-                    events.append({"type": "child", "turn": branch_dir})
+                    events.append({"type": "child", "turn": branch_dir,
+                                   "carries_on": carries_on})
                 return
                 continue
 
@@ -469,8 +491,10 @@ class DungeonGenerator:
                 events.append({"type": "child", "turn": self._resolve_side(node, payload.get("side"))})
                 if self._passage_carries_on(node, payload):
                     onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                    if carried_width is not None:
+                        onward.geo["width_ft"] = carried_width
                     node.children.append(onward)
-                    events.append({"type": "child", "turn": None})
+                    events.append({"type": "child", "turn": None, "carries_on": True})
                 return
 
             if tag == "shaft":
@@ -506,8 +530,10 @@ class DungeonGenerator:
                 node.children.append(child)
                 events.append({"type": "child", "turn": None})
                 onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                if carried_width is not None:
+                    onward.geo["width_ft"] = carried_width
                 node.children.append(onward)
-                events.append({"type": "child", "turn": None})
+                events.append({"type": "child", "turn": None, "carries_on": True})
                 return
 
             # A feature the table places *in a wall* rather than at the end of
@@ -533,8 +559,10 @@ class DungeonGenerator:
                 # there are two nodes.
                 if self._passage_carries_on(node, payload):
                     onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                    if carried_width is not None:
+                        onward.geo["width_ft"] = carried_width
                     node.children.append(onward)
-                    events.append({"type": "child", "turn": None})
+                    events.append({"type": "child", "turn": None, "carries_on": True})
                 return
 
             # terminal: door / stairs / room

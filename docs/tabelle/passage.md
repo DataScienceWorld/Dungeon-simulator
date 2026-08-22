@@ -28,8 +28,8 @@ Ogni tiro produce una riga `[Passage d20=N] <testo>` nella voce del passaggio.
 | **12** | Door in the right wall. 50% il passaggio finisce qui | La porta è una **feature del muro laterale**, non la fine del passaggio: parte come **ramo di lato** (`turn` = destra) e il tronco *non* ruota. Poi si tira il 50% (`[Passage d100=N vs 50%]`, sempre scritto): se il passaggio prosegue, il proseguimento è **un secondo figlio** e il nodo finisce comunque qui. |
 | **13** | Door in the left wall. 50% ... | Come sopra, a sinistra. |
 | **14** | Secret door on a passage wall (DC 15). 50% ... | La porta **c'è**: la Percezione DC 15 dice solo se qualcuno la nota, e il ramo laterale verso [Secret Door](secret-door.md) viene esplorato in entrambi i casi. Il muro non è detto dalla tabella, quindi **si tira** (`[Passage d100=N] The secret door is in the left/right wall.`) e si scrive. Poi il 50% di proseguimento, come sopra. |
-| **15** | Narrows to N ft wide | Larghezza `max(5, (d6//2)×10)` → 5, 10, 10, 20, 20, 30 ft secondo il d6. Un passaggio è largo **5 ft di default**, cioè **una cella**, quindi *stringersi* non si vede: `max(5,...)` e `max(10,...)` danno entrambi una cella. Un d6 alto qui **allarga** invece di stringere - è la tabella che è fatta così. Il corridoio viene comunque spezzato in due tratti dal punto del tiro in poi. Poi ritira. |
-| **16** | Widens to N ft wide | `max(10, (d6//2)×10)` → 10, 10, 10, 20, 20, 30 ft. Si vede solo con **d6 ≥ 4**: sotto, 10 ft è già una cella come la larghezza di partenza. Con 20 o 30 ft il tratto viene davvero disegnato largo 2 o 3 celle. |
+| **15** | Narrows to N ft wide | `max(5, (d6÷2)×10)` → 5, 10, 10, 20, 20, 30 ft secondo il d6 (misurato su 40 seed: escono tutti e quattro). Un d6 alto qui **allarga** invece di stringere - è la tabella che è fatta così. Vale tutto quello che è scritto sotto per l'allargamento: la larghezza resta da lì in poi, e **si ritira subito** sulla tabella passaggio. Stringersi però non si vede: un corridoio è già largo una cella e sotto non si può andare. |
+| **16** | Widens to N ft wide | `max(10, (d6÷2)×10)` → **10, 20 o 30 ft** e nient'altro (misurato su 40 seed: 39/32/19). Da lì in poi **il passaggio resta di quella larghezza**, e la porta con sé anche oltre un bivio, giù per la via che tira dritto - non per un ramo che gira, che è un altro corridoio. Poi **si ritira subito** sulla tabella passaggio. Vedi sotto per cosa si vede e cosa no. |
 | **17** | Opening to the left, leading to stairs. 50% ... | Apertura laterale, quindi **ramo di lato** verso `stairs`, tronco invariato. Sulla mappa: l'alcova delle scale con **la sua unica apertura dipinta sul muro verso il corridoio** - nessuna porta disegnata (vedi [stairs.md](stairs.md)). Poi il 50% di proseguimento. |
 | **18** | Opening to the right, leading to stairs. 50% ... | Come sopra, a destra. |
 | **19** | Opening in the floor, straight drop 1d10×10 ft | La lunghezza è **verticale**: nessun `move`, il passaggio non si allunga. **Due vie, quindi due nodi**: giù (d4 1-2 passaggio, 3-4 stanza, al **livello successivo**, cioè un'isola nuova su un'altra tavola) e dritto (un passaggio a questo livello, dallo stesso punto). Il passaggio finisce al bivio. Che cosa sia l'apertura si tira a parte: [apertura-nel-pavimento.md](apertura-nel-pavimento.md) - una trappola, una botola segreta da trovare, o un cedimento. |
@@ -44,6 +44,25 @@ di almeno `DEFAULT_PASSAGE_WIDTH_FT` = 5 ft, che sulla griglia è **una cella
 da 10 ft**, e lo dice (`[Layout] Il tiro non dava lunghezza propria al
 passaggio: sulla mappa percorre comunque il minimo di 10ft ...`). È la stessa
 regola dei 5 ft che diventano una cella, applicata alla lunghezza.
+
+**La larghezza resta.** Un tiro 15 o 16 non riguarda il tratto fino al bivio
+successivo: riguarda **il passaggio**. La larghezza viene portata avanti in
+`geo["width_ft"]` fino alla via che **tira dritto** - stesso corridoio - e non
+giù per un ramo che gira, che è un corridoio nuovo alla larghezza ordinaria.
+L'evento che marca la prosecuzione è `carries_on`, non `turn is None`: anche un
+portale, una caduta e un figlio terminale hanno `turn: None`. Il nodo che
+eredita lo scrive nella sua voce (*"This passage is N ft wide here, carried on
+from the roll that changed it."*), perché il tiro che l'ha allargato sta in
+un'altra voce. Su 20 seed i tratti larghi disegnati passano da 53 a 71.
+
+**Ma dungeongen non sa disegnare un corridoio largo.** `Passage.__init__`
+rifiuta con un `ValueError` qualunque cosa non sia esattamente una cella
+(*"Passage must be exactly one cell wide"*), e il suo adattatore non guarda
+nemmeno il campo `width` del modello. Quindi oggi la larghezza si vede **solo
+nel renderer di ripiego RoughJS**, che la disegna davvero, e non nell'arte di
+dungeongen, che è quella che si usa sempre. L'unica strada è consegnare il
+tratto largo come una **stanza** invece che come un passaggio - vedi
+[`TODO.md`](../../TODO.md) sezione 9.
 
 **Il passaggio si ferma contro le stanze già disegnate.** Chi disegna prima ha
 la precedenza. Se un passaggio raggiunge una stanza già piazzata, si ferma al

@@ -457,3 +457,71 @@ def test_a_secret_door_is_explored_whether_or_not_anyone_finds_it():
             else:
                 found += 1
     assert found > 5 and missed > 10, f"found {found}, missed {missed}"
+
+
+def test_a_widened_passage_stays_wide_down_the_way_it_carries_on():
+    """"Passage widens to N ft" is about the passage, not about the stretch
+    of it before the next fork.
+
+    The width used to be lost the moment the passage ended and dispatched a
+    child: a corridor rolled 30ft wide went back to the ordinary 10 at the
+    first side passage. It carries now down the way that goes *straight on* -
+    the same corridor - and not down a branch that turns, which is a new one.
+
+    Over 20 seeds it takes the wide runs the layout draws from 53 to 71.
+
+    The width itself is `(1d6 ÷ 2) x 10`, floored at 10ft for a widening and
+    5ft for a narrowing: measured over 40 seeds, widening gives 10/20/30 and
+    nothing else, narrowing 5/10/20/30. And either way the passage rolls
+    again - all 163 of them were followed by another roll in the same
+    entry."""
+    import re
+
+    carried = branched = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage":
+                continue
+            resized = [e for e in node.geo.get("events", []) if e["type"] == "resize"]
+            if not resized:
+                continue
+            width = resized[-1]["width_ft"]
+            # `carries_on` marks the child that *is* this corridor going on -
+            # `turn is None` is not enough, a portal, a drop down a shaft and
+            # a plain terminal child all look like that too.
+            children = [e for e in node.geo.get("events", []) if e["type"] == "child"]
+            for child, event in zip(node.children, children):
+                if event.get("carries_on"):
+                    assert child.geo.get("width_ft") == width, (
+                        f"seed {seed} passage #{node.id}: rolled {width} ft wide and the "
+                        f"way straight on came out {child.geo.get('width_ft')}"
+                    )
+                    carried += 1
+                elif child.kind in ("passage", "pending"):
+                    # Only passages: a room keeps its own rolled size in the
+                    # same `width_ft`, which is not this at all.
+                    assert child.geo.get("width_ft") is None, (
+                        f"seed {seed} passage #{node.id}: only the way straight on keeps "
+                        f"the width, not {child.geo.get('width_ft')} on a {child.kind}"
+                    )
+                    branched += 1
+    assert carried > 5, f"expected some widened passages to carry on, found {carried}"
+
+
+def test_a_passage_that_inherited_its_width_says_so():
+    """A corridor drawn twice the normal width has to be explainable, and the
+    roll that made it so is in another entry."""
+    found = 0
+    for seed in range(20):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage" or not node.geo.get("width_ft"):
+                continue
+            width = node.geo["width_ft"]
+            assert any(f"is {width} ft wide here" in line for line in node.lines), (
+                f"seed {seed} passage #{node.id}: inherited {width} ft and says nothing "
+                f"about it: {node.lines[:2]}"
+            )
+            found += 1
+    assert found > 5, f"expected some passages to inherit a width, found {found}"
