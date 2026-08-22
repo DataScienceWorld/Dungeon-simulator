@@ -486,7 +486,14 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
     def _covered(x: float, y: float) -> bool:
         return (round(x, 3), round(y, 3)) in link_points
 
+    # Points at which the bridge drew a door of its own, on a room's opening
+    # that no link covers. Recorded by `_square_off_room_exits` during the
+    # render, which runs before this.
+    drawn_on_exits = island.get("_doors_drawn") or set()
+
     def _door_drawn_by_dungeongen(door) -> bool:
+        if (door["x1"], door["y1"]) in drawn_on_exits:
+            return True
         return any(cell in link_end_cells for cell in _bridge.door_cells(door))
 
     def _door_marker_geometry(door):
@@ -564,7 +571,9 @@ def _dungeongen_overlay_for_island(island: dict, offset_x: float, offset_y: floa
             # showed - it would the moment one line grew an apostrophe.
             parts.append(_secret_mark(mx, my, ddx, ddy, scale, f"Porta segreta. {raw_title}"))
             continue
-        if _covered(door["x1"], door["y1"]) and _door_drawn_by_dungeongen(door):
+        if ((door["x1"], door["y1"]) in drawn_on_exits
+                or (_covered(door["x1"], door["y1"])
+                    and _door_drawn_by_dungeongen(door))):
             # dungeongen drew a proper door glyph here, so drawing a rust bar
             # over it would just double-mark the same door - but its glyph
             # carries no tooltip, so leave an invisible hit area behind to

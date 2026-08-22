@@ -1135,6 +1135,14 @@ def _square_off_room_exits(dg_map, dg_dungeon, island) -> None:
         band, _, _ = _wall_band(cell, side, CELL_SIZE, span,
                                 dg_map.options.border_width)
         stroke = (dg_map.options.door_stroke_width if door is not None else None)
+        if door is not None:
+            # Written down for the overlay: it marks with a rust bar every
+            # door dungeongen does not draw a glyph for, and until this it
+            # had no way of knowing about the ones drawn here. Seed 72's door
+            # 54 came out marked twice - our rectangle on room 36's wall and
+            # a rust bar a cell away inside passage 71.
+            island.setdefault("_doors_drawn", set()).add(
+                (exit_spec.x, exit_spec.y))
 
         def draw(canvas, layer=None, _band=band, _stroke=stroke, _map=dg_map):
             if layer is not _Layers.OVERLAY:
@@ -1472,6 +1480,10 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
     if not fits_size_limit(island):
         raise ValueError("island exceeds dungeongen's safe rendering size - caller should fall back")
 
+    # Kept because `island` is rebound below when a room-less one has to be
+    # normalized: whatever the passes record has to reach the caller's own
+    # dict, not the copy.
+    original = island
     dg_dungeon = build_dungeongen_dungeon(island)
     shift_x = shift_y = 0
     if not dg_dungeon.rooms:
@@ -1507,6 +1519,12 @@ def render_island_svg(island: dict) -> tuple[str, float, float, float, int, int]
                 svg = fh.read()
         finally:
             os.unlink(path)
+    if original is not island:
+        # ...and back onto the caller's, undoing the shift the copy was made
+        # with, so the points match the doors it holds.
+        original["_doors_drawn"] = {
+            (x + shift_x, y + shift_y) for x, y in island.get("_doors_drawn", ())
+        }
     px_per_grid_unit = SCALE * CELL_SIZE
     dg_min_x, dg_min_y, _, _ = dg_dungeon.bounds  # the very shift the adapter applied
     # ...plus whatever we normalized away above, which the adapter then saw as

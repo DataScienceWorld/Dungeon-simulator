@@ -1522,3 +1522,47 @@ def test_a_room_exit_contributes_no_chip_of_its_own():
                         )
                         checked += 1
     assert checked > 40, f"expected plenty of room exits, found {checked}"
+
+
+def test_a_door_the_bridge_draws_is_not_marked_again_by_the_overlay():
+    """The overlay marks with a rust bar every door dungeongen leaves without
+    a glyph. Since the bridge started drawing the doors on a room's own
+    openings - the ones no room-to-room link covers - that set is smaller, and
+    it had no way of knowing: seed 72's door 54 came out marked twice, our
+    rectangle on room 36's wall and a rust bar a cell away inside passage 71.
+
+    `_square_off_room_exits` records what it drew on the island, and this
+    checks the two do not overlap by reading the bars back out of the overlay
+    it produces."""
+    import re
+    from dungeon_simulator.render_map import _dungeongen_overlay_for_island
+
+    checked = 0
+    for seed in range(12):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not bridge.fits_size_limit(island):
+                    continue
+                _svg, off_x, off_y, scale, _w, _h = bridge.render_island_svg(island)
+                drawn = island.get("_doors_drawn") or set()
+                if not drawn:
+                    continue
+                overlay = _dungeongen_overlay_for_island(island, off_x, off_y, scale)
+                bars = [
+                    ((float(x1) + float(x2)) / 2, (float(y1) + float(y2)) / 2)
+                    for x1, y1, x2, y2 in re.findall(
+                        r'<line x1="([-\d.]+)" y1="([-\d.]+)" '
+                        r'x2="([-\d.]+)" y2="([-\d.]+)" stroke="[^"]*" stroke-width="5">',
+                        overlay)
+                ]
+                for door_x, door_y in drawn:
+                    px = off_x + door_x * scale
+                    py = off_y + door_y * scale
+                    for bar_x, bar_y in bars:
+                        assert abs(bar_x - px) > scale or abs(bar_y - py) > scale, (
+                            f"seed {seed}: the door at {(door_x, door_y)} is drawn by the "
+                            f"bridge and marked again by the overlay"
+                        )
+                    checked += 1
+    assert checked > 15, f"expected plenty of doors drawn on room exits, found {checked}"
