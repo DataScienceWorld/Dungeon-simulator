@@ -505,36 +505,59 @@ Da stabilire prima di scriverlo:
   figli vanno tagliati come in ogni altra fermata - a meno che "fondersi" non
   voglia dire che si prosegue *dentro* l'altro corridoio.
 
-## 8c. Una svolta dovrebbe essere una L da 3 celle, e la conversione in celle non lo permette
+## 8c. ~~Una svolta dovrebbe essere una L da 3 celle~~ - fatto
 
-Chiesto: le righe 4 e 5 della [Passage Table](docs/tabelle/passage.md) - *"turns
-left/right 90 degrees"*, che non danno lunghezza propria - dovrebbero disegnarsi
-come una **L di tre celle (30ft)**. Oggi una svolta senza lunghezza propria
-esce cosi', misurata su 40 seed contando le celle che dungeongen riceve
-davvero: **1 cella 7 volte, 2 celle 23, 3 celle 22, 4 celle 11, 6 celle 1**, e
-5 passaggi ridotti a un punto solo.
+Chiesto: le righe 4 e 5 della [Passage Table](docs/tabelle/passage.md) -
+*"turns left/right 90 degrees"* - si disegnano come una **L di tre celle
+(30ft)**: una cella nella direzione di prima, la cella d'angolo, una nella
+direzione nuova, e da li' il passaggio prosegue di la'.
 
-Allungare il braccio prima dell'angolo non basta, ed e' stato provato: il
-problema e' che il numero di celle di un braccio **dipende dal verso**, per la
-convenzione "la cella e' il quadrato *dopo* la linea" (`_segment_cells`). Con
-un braccio da 1 e uno da 2, in lattice:
+Il nodo era che la lunghezza di un braccio **in celle** dipende dal verso, per
+la convenzione "la cella e' il quadrato *dopo* la linea" (`_segment_cells`):
+con un braccio da un'unita' per parte, N->E ne da' due sole e nessun angolo.
+Provate tutte e otto le svolte contro il percorso di celle che dungeongen
+riceve davvero, esiste **una sola** coppia di bracci che da' 3 celle piegate, e
+segue una regola: il braccio che *arriva* all'angolo vuole due unita' quando va
+nel verso negativo (N o W), quello che *riparte* quando va nel verso positivo
+(E o S). E' `_turn_lead` in `layout.py`; sopra il minimo la piega tiene per
+qualunque lunghezza, quindi e' un pavimento e non una misura fissa - una
+svolta dopo 50ft di corridoio resta una L.
 
-| svolta | celle ottenute | quante |
+Serviva anche applicarlo ai due bracci in momenti diversi: quello in ingresso
+si allunga *prima* della svolta (`_lead_in`, che misura la gamba percorsa dalla
+svolta precedente, non "il passaggio si e' mosso" come `ensure_min_length`),
+quello in uscita e' un debito che il primo spostamento successivo paga
+(`pending_lead`, letto dentro `advance`) - qualunque esso sia, un tiro di
+movimento corto o il minimo di una porta.
+
+Misurato su 40 semi, sulle svolte reali (i tratti di uno stesso nodo
+concatenati e i punti allineati fusi, perche' un cambio di larghezza spezza il
+tratto a meta' di un braccio):
+
+| | prima | dopo |
 |---|---|---|
-| E->S | (0,0) (1,0) (1,1) | 3 |
-| E->N | (0,0) (1,0) (1,-1) (1,-2) | 4 |
-| W->S | (-1,0) (-1,1) | 2 |
-| N->E | (0,-1) (1,-1) | 2 |
+| svolte che piegano | 39 su 132 (30%) | **120 su 124 (97%)** |
+| di cui esattamente 3 celle | 19 | 63 |
+| braccio in ingresso piu' corto del dovuto | 78 | **0** |
+| braccio in uscita corto non terminale | 5 | **0** |
 
-Contigue lo sono tutte, ma la stessa camminata da' da 2 a 4 celle a seconda di
-dove e' rivolta. E con 2 celle prima e 1 dopo va peggio: E->S da' tre celle
-**in fila** (il braccio dopo la svolta cade nella stessa riga, quindi la L non
-si vede affatto) e E->N ne da' quattro con un salto in diagonale.
+(le svolte sono 132 prima e 124 dopo: i gomiti sono piu' lunghi, quindi
+qualche passaggio in piu' arriva contro una stanza e si ferma prima.)
 
-Per una L uniforme i due bracci vanno calcolati **in celle** e non in punti di
-lattice, compensando il verso come gia' si fa per il passaggio d'accesso delle
-scale (`step_x < 0` in `build_dungeongen_dungeon`). Va fatto li', non
-allungando il minimo.
+Le 4 che non piegano sono gomiti **amputati da una stanza gia' disegnata**:
+il passaggio ci sbatte contro, si apre come ingresso segreto e si ferma li',
+e ognuna lo dice nel proprio registro. Non c'e' spazio per il braccio, quindi
+non c'e' L: e' la stessa regola di sempre, chi disegna prima ha la precedenza.
+Pinnato in `tests/test_layout_turns.py`, che senza la modifica fallisce sul
+primo seme.
+
+**Effetto collaterale registrato, non un difetto:** i gomiti allungano i
+corridoi, quindi le mappe crescono. Su 40 semi un'isola (seme 1, livello 2)
+passa da 2368 a 3008 unita' mappa e supera il limite di dungeongen (2800),
+scendendo al ripiego RoughJS: la copertura passa da 123/123 livelli a 122/123.
+Sullo sweep dei 1785 isolotti i rifiuti per dimensione passano da 1 a 2.
+Rimpicciolire il dungeon per stare nel limite sarebbe barare sulla fedelta';
+semmai va alzato il limite o spezzata l'isola, ed e' un lavoro a se'.
 
 ## 9. Cose che le tabelle dicono e la mappa non sa dire
 

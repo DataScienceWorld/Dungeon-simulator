@@ -65,6 +65,29 @@ def _rotate(heading: str, direction: str | None) -> str:
     return heading
 
 
+def _turn_lead(heading: str, incoming: bool) -> int:
+    """Cells one arm of a 90-degree turn needs for the bend to draw as an L.
+
+    "Passage turns right 90 degrees" is one 30ft elbow: a cell in the old
+    heading, the corner cell, and a cell in the new one, after which the
+    passage carries on the new way. On the lattice that is not one unit per
+    arm, because a cell is claimed on the far side of the line it is walked
+    from (`_segment_cells` takes the half-open interval): walking one unit
+    north out of a corner and one unit east claims a single cell and the
+    elbow disappears. Which arm needs the extra unit follows from the sign
+    of its heading, and was measured against the cell path dungeongen is
+    actually handed - see tests/test_layout_turns.py, which pins all eight
+    turns. Above the minimum the bend holds for any length, so this is a
+    floor, not a fixed size: a turn after a 50ft walk is still an L.
+    """
+    dx, dy = _VECTORS[heading]
+    # Arriving: the leg that ends at the corner needs two units when it runs
+    # the negative way (N or W). Leaving: the leg that starts at the corner
+    # needs two when it runs the positive way (E or S).
+    negative = dx + dy < 0
+    return 2 if (negative if incoming else not negative) else 1
+
+
 def _cells(feet: float) -> int:
     """A measurement the tables rolled, in feet, as whole 10ft cells.
 
@@ -913,6 +936,11 @@ class _Layout:
 
         broke_into = None  # (room_id, wall) once this passage reaches a room already drawn
         no_space = False   # a widened run whose flanks have nowhere to go
+        # A 90-degree turn has to read as an L on the grid rather than as a
+        # nick off a corner, and how many cells each arm of the bend needs
+        # depends on which way the two headings point. See `_turn_lead`.
+        leg_start = (x, y)  # lattice point where the current heading began
+        pending_lead = 1    # cells the next stretch owes before anything else
 
         def advance(length):
             """Walk `length` cells along the heading, stopping at the wall of
@@ -925,7 +953,12 @@ class _Layout:
             corridor cells across 40 seeds (11.9%) sat inside a room's floor,
             which dungeongen then drew as passage - a notch eaten out of the
             wall, opening onto nothing."""
-            nonlocal x, y, moved, broke_into, no_space
+            nonlocal x, y, moved, broke_into, no_space, pending_lead
+            # Whatever moves next has to carry the second arm of the bend that
+            # was just turned, however short its own roll was: a 10ft step out
+            # of a corner draws no corner at all.
+            length = max(length, pending_lead)
+            pending_lead = 1
             dx, dy = _VECTORS[heading]
             nx, ny = x + dx * length, y + dy * length
             # A widened corridor needs the ground its flanks stand on, and a
@@ -963,7 +996,7 @@ class _Layout:
                 no_space = True
             return room_id is None and not blocked
 
-        def ensure_min_length():
+        def ensure_min_length(cells=1):
             # Several rolls (a door/stairs "in the wall" with no length of
             # its own, "ends in an open entrance to a room", a resize with
             # nothing walked before it...) have no move event at all - the
@@ -974,8 +1007,9 @@ class _Layout:
             if moved:
                 return True
             before = (x, y)
-            carried_on = advance(_cells(DEFAULT_PASSAGE_WIDTH_FT))
-            if (x, y) != before:
+            carried_on = advance(cells)
+            walked = abs(x - before[0]) + abs(y - before[1])
+            if walked:
                 # Said out loud, because the reader cannot get it from the
                 # rolls: a passage whose first roll is a feature in its own
                 # wall has no length anywhere in its entry, and looks like a
@@ -986,10 +1020,27 @@ class _Layout:
                 self._note(
                     node,
                     f"[Layout] Il tiro non dava lunghezza propria al passaggio: sulla mappa "
-                    f"percorre comunque il minimo di {round(FT_PER_UNIT)}ft "
+                    f"percorre comunque il minimo di {round(walked * FT_PER_UNIT)}ft "
                     f"prima di cio' che segue."
                 )
             return carried_on
+
+        def lead_in(cells):
+            """Make the leg the passage is currently walking at least `cells`
+            long, so the turn about to happen bends.
+
+            Not the same as `ensure_min_length`: that one asks "has this
+            passage moved at all", which a turn 10ft after the previous turn
+            answers yes to while still being a corner the grid cannot draw.
+            It measures from the last turn, not from the last point, because a
+            width change splits the run halfway along an arm and that is not a
+            bend."""
+            walked = abs(x - leg_start[0]) + abs(y - leg_start[1])
+            if walked >= cells:
+                return True
+            if moved:
+                return advance(cells - walked)
+            return ensure_min_length(cells - walked)
 
         for event in node.geo.get("events", []):
             etype = event["type"]
@@ -1005,9 +1056,11 @@ class _Layout:
                 # the minimum-length floor in the *new* heading instead would
                 # put the passage on top of the door's own far side, with
                 # nothing distinct at the room's exit at all.
-                if not ensure_min_length():
+                if not lead_in(_turn_lead(heading, incoming=True)):
                     break
                 heading = _rotate(heading, event["dir"])
+                pending_lead = _turn_lead(heading, incoming=False)
+                leg_start = (x, y)
                 runs[-1]["points"].append((x, y))
                 path.points.append((x, y))
                 # The passage now has to actually go somewhere in its new

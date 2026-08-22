@@ -245,12 +245,22 @@ both 6.0px, both centred exactly on the grid line.
 - **Let the layout record the takeoff.** Deriving it in the bridge was wrong
   in both directions - behind the branch joins the opposite arm, perpendicular
   joins whatever runs alongside. And translate it with the island.
+- **Count a corridor's arms in cells, not in lattice units.** A cell is
+  claimed on the far side of the line it is walked from, so one lattice unit
+  north and one east is a single cell and no corner at all: how many units an
+  arm needs depends on the *sign* of its heading. `_turn_lead` has the rule
+  (arriving leg: two units when it runs N or W; leaving leg: two when it runs
+  E or S), measured against the cell path the bridge actually hands over.
 
 ### Don't
 
 - **Don't decide "already drawn" by comparing a first point to a link's
   points.** Compare *cells*. Comparing points threw away exactly the arms a
   crossing is made of.
+- **Don't measure a bend on the raw point list.** A width change appends a
+  point halfway along an arm, and a passage's runs are separate corridor
+  records: concatenate the runs of one node and merge collinear points first,
+  or a perfectly good L reads as two stubs.
 
 ### To investigate
 
