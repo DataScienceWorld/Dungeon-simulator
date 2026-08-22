@@ -210,6 +210,12 @@ both 6.0px, both centred exactly on the grid line.
 - An **open** door is traversed by `Map._trace_connected_region`, so the two
   rooms become one region and the wall between them is erased. A **closed**
   door and an **`Exit`** are terminal: they contribute their chip and stop.
+- **An open door draws nothing, and must not be made to.** It is a hole, not a
+  glyph: there is no wall on that join to put a door in. `Door.draw` opens
+  with `if not self._open`, and a replacement `draw` that drops that guard
+  puts a door across every open join - which is what put one between seed
+  72's passages 3 and 8, where the map had never drawn anything. Over 12 seeds
+  42 of 145 doors are open.
 - dungeongen's own generator only places a door with probability
   `DOOR_CHANCE`. Most of its room-corridor joins have no door at all - the
   opening is simply the two floors overlapping.

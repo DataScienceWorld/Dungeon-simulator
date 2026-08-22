@@ -29,7 +29,13 @@ sempre lo stesso, e dipende da una sola cosa: se la porta è segreta o no.
   `OPEN`, cioè su un buco: consegnare onestamente una porta segreta la
   trasformava nell'unica cosa che una porta segreta non deve essere,
   un'apertura.
-- **Porta normale**: un **rettangolo disegnato sul muro** - riempito di bianco
+- **Porta aperta** (`_door_type_at` non trova un nodo porta su quella cella):
+  **non viene disegnato niente**, ed è giusto così. In dungeongen una porta
+  aperta non è un glifo diverso, è un buco: `Map._trace_connected_region` ci
+  passa attraverso, i due lati diventano una regione sola e su quel giunto non
+  c'è nessun muro in cui mettere una porta. Su 12 seed sono 42 porte su 145 -
+  la maggior parte dei giunti fra due tratti di corridoio.
+- **Porta chiusa normale**: un **rettangolo disegnato sul muro** - riempito di bianco
   sopra il bordo, come fa il glifo di dungeongen per aprire il passaggio, e poi
   contornato - largo il 60% della cella e profondo un `border_width` per lato
   della linea. Più un rettangolo invisibile per il tooltip con tutto il testo

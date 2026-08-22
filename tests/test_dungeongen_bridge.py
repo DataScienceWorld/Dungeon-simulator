@@ -1193,7 +1193,10 @@ class _RecordingCanvas:
 
 
 def _doors_on_walls(island):
-    """Every door of this island that sits on a wall, with the wall it sits in.
+    """Every *closed* door of this island that sits on a wall, with the wall.
+
+    Open ones are left out on purpose: an open door is a hole rather than a
+    glyph, and has its own test below.
 
     Yields (element, cell, side, far, secret) after the real drawing passes
     have run, in the order `render_island_svg` runs them."""
@@ -1221,7 +1224,7 @@ def _doors_on_walls(island):
             if not isinstance(element, _MapDoor):
                 continue
             cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
-            if cell in alcoves:
+            if cell in alcoves or element.open:
                 continue
             placed = bridge._door_sides(element, cell, CELL_SIZE)
             if placed is None or placed[0] != "wall":
@@ -1238,8 +1241,8 @@ def test_a_doors_chip_stays_on_its_own_side_of_the_wall():
     the element across the wall reached half a cell into a region that is not
     its own - and a region outlines whatever it owns, so it came out as a
     rounded box hanging off the wall with the leaf floating in the middle of
-    it. 117 of 117 wall-doors over 12 seeds, every one reaching the full 0.50
-    of a cell.
+    it. 95 of 95 closed doors on walls over 12 seeds, every one reaching the
+    full 0.50 of a cell.
 
     Measured on the shapes rather than the render: dungeongen's decoration is
     not reproducible from one process to the next (see LESSONS.md), but its
@@ -1268,7 +1271,7 @@ def test_a_doors_chip_stays_on_its_own_side_of_the_wall():
                         f"back across it - that is the box that gets outlined"
                     )
                     checked += 1
-    assert checked > 60, f"expected plenty of doors on walls, found {checked}"
+    assert checked > 40, f"expected plenty of doors on walls, found {checked}"
 
 
 def test_a_doors_glyph_is_drawn_on_the_wall_it_sits_in():
@@ -1276,7 +1279,8 @@ def test_a_doors_glyph_is_drawn_on_the_wall_it_sits_in():
 
     dungeongen draws the leaf in the middle of the door's own cell, which for
     a door of ours is the middle of the corridor beside the wall. Measured
-    over the same 12 seeds: every one of 95 leaves sat 0.50 of a cell off."""
+    over the same 12 seeds: every one of 95 leaves sat 0.50 of a cell off, and
+    all 93 that are not secret are now on the line."""
     from dungeongen.constants import CELL_SIZE
     from dungeongen.map.enums import Layers
 
@@ -1306,7 +1310,7 @@ def test_a_doors_glyph_is_drawn_on_the_wall_it_sits_in():
                         f"{side} wall it sits in"
                     )
                     checked += 1
-    assert checked > 60, f"expected plenty of doors on walls, found {checked}"
+    assert checked > 40, f"expected plenty of doors on walls, found {checked}"
 
 
 def test_a_secret_door_has_no_door_drawn_in_it():
@@ -1339,3 +1343,43 @@ def test_a_secret_door_has_no_door_drawn_in_it():
                     )
                     checked += 1
     assert checked > 3, f"expected a few secret doors, found {checked}"
+
+
+def test_an_open_door_is_a_hole_and_draws_nothing():
+    """dungeongen's open door is not a different glyph, it is the absence of
+    one: `Map._trace_connected_region` walks straight through it, so the two
+    sides are one region and there is no wall between them at all.
+
+    Worth a test of its own because the first version of `_square_off_doors`
+    dropped the `if not self._open` guard that `Door.draw` opens with, and so
+    drew a door across every one of them - including the join between seed
+    72's passages 3 and 8, where nothing had ever been drawn."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.map.door import Door as _MapDoor
+    from dungeongen.map.enums import Layers
+
+    checked = 0
+    for seed in range(8):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                with bridge._region_inflation():
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                    bridge._square_off_doors(dg_map, built, island)
+                    bridge._quieten_stair_alcoves(dg_map, built)
+                    for element in dg_map._elements:
+                        if not isinstance(element, _MapDoor) or not element.open:
+                            continue
+                        canvas = _RecordingCanvas()
+                        element.draw(canvas, Layers.OVERLAY)
+                        cell = (round(element._x / CELL_SIZE),
+                                round(element._y / CELL_SIZE))
+                        assert not canvas.rects, (
+                            f"seed {seed}: the open door at {cell} draws a door glyph, "
+                            f"on a join where there is no wall"
+                        )
+                        checked += 1
+    assert checked > 20, f"expected plenty of open doors, found {checked}"

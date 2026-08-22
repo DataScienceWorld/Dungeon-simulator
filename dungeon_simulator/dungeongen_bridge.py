@@ -1003,6 +1003,15 @@ def _square_off_doors(dg_map, dg_dungeon, island) -> None:
     for element in dg_map._elements:
         if not isinstance(element, _MapDoor):
             continue
+        if element.open:
+            # An open door is not a glyph, it is a hole:
+            # `Map._trace_connected_region` walks through one, so the two sides
+            # are a single region and there is no wall between them to draw a
+            # door in. dungeongen's own `Door.draw` returns immediately for
+            # these, and the first version of this pass did not - which put a
+            # door across the join between seed 72's passages 3 and 8, where
+            # the map had never drawn anything.
+            continue
         cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
         placed = _door_sides(element, cell, CELL_SIZE)
         if placed is None:
