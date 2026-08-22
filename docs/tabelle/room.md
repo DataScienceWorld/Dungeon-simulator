@@ -79,3 +79,8 @@ Il tiro sui contenuti è una tabella a parte: [room-contents.md](room-contents.m
 La **dimensione della stanza** però gli dà un bonus, e questo è qui perché
 dipende dal tiro di forma: lato più lungo ≥130 ft → **+30**, ≥90 ft → **+15**,
 altrimenti niente. Si somma all'eventuale bonus arrivato dalle scale.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

@@ -62,6 +62,9 @@ mostri**: la scelta della creatura è lasciata a chi gioca.
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 - Il tier del tesoro segue il livello del dungeon e il danno delle trappole il
   livello del gruppo. È coerente con la fonte? Va verificato, perché le due
   scale divergono appena il gruppo scende di qualche livello.

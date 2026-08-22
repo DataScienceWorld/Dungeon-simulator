@@ -479,6 +479,136 @@ dungeongen's own hatching density, not how the passage branches.
 
 ---
 
+## 9. Cose che le tabelle dicono e la mappa non sa dire
+
+Un inventario, tabella per tabella, di ogni risultato che produce qualcosa di
+reale e che il disegno **non rappresenta, o rappresenta come un'altra cosa**.
+Sta qui e non nelle note per tabella (`docs/tabelle/`) perché è lavoro da
+fare, non conoscenza acquisita - le note rimandano qui.
+
+Tre categorie, marcate per riga:
+
+- **(A)** sappiamo come si fa, non è fatto;
+- **(B)** non sappiamo come si fa con dungeongen;
+- **(C)** prima va deciso *se* va disegnato: a una cella da 10ft può non
+  leggersi, e una mappa piena di simboli è peggio di una muta.
+
+Ogni voce va chiusa allo stesso modo di tutto il resto: una misura prima, una
+misura dopo, e un test che fallisca senza la modifica.
+
+### Door Table
+
+- **(A) Soglie senza battente.** 26-30 *"empty doorway"*, 51-55 *"empty
+  archway, no door"*, 96-100 *"smashed and hanging off its hinges"*: il testo
+  dice esplicitamente che una porta non c'è, e vengono disegnate col
+  rettangolo di porta come tutte le altre. Il come è già in mano:
+  `_square_off_doors` riempie di bianco sopra il muro e poi contorna - per una
+  soglia vuota basta **non contornare**, esattamente come per l'apertura
+  dell'alcova. Da misurare: quante sono (sulle porte disegnate, non su tutte
+  le righe) e se un varco senza contorno si distingue da un muro rotto.
+- **(C) Grata / saracinesca.** 21-25: sulla mappa è una porta come le altre.
+  La convenzione cartografica esiste (una fila di trattini nel varco) e
+  dungeongen non ha niente del genere; andrebbe disegnata da noi
+  nell'overlay.
+- **(C) Materiale e stato.** 61-75 tira legno/pietra/ferro, chiusa/aperta,
+  trappolata o no, e lo scrive in chiaro; il disegno è identico. Anche 31-35
+  (legno), 36-40 (ferro), 41-45 e 91-95 (pietra) dicono il materiale. Da
+  decidere se il materiale merita un tratto diverso o se resta registro.
+- **(C) Porta chiusa a chiave, trappolata, che chiede una chiave, di energia
+  elementale.** Nessuna di queste ha un segno. Una porta chiusa a chiave e una
+  aperta si disegnano uguali, e il giocatore lo scopre solo dal tooltip.
+
+### Room Table
+
+- **(B) Stanza triangolare (15) e trapezoidale (19).** Disegnate
+  **rettangolari**. `RoomShape` di dungeongen ha RECT, SQUARE, CIRCLE,
+  OCTAGON, T_JUNCTION, CROSS, L_CORNER: un triangolo non c'è. Le opzioni sono
+  tenersi il rettangolo (onesto ma falso), passare a OCTAGON (falso in un
+  altro modo), o disegnare la forma nell'overlay sopra il pavimento di
+  dungeongen. Da misurare quante sono prima di decidere.
+- **(B) Caverna grezza (20).** Stessa cosa: `cave` va su RECT. Qui però
+  dungeongen ha del crosshatch e delle forme organiche altrove - da verificare
+  se una stanza può essere consegnata con un contorno irregolare.
+- **(C) L'ingrossamento minimo.** Una stanza più piccola di 2 celle per lato
+  viene disegnata a 2 celle dove c'è spazio: la mappa mente sulla misura, e la
+  voce del registro dice quella vera. È deliberato e documentato, ma non è mai
+  stato verificato quanto spesso accade né quanto si nota.
+
+### Passage Table
+
+- **(C) "Narrows to 5 ft" (15).** Invisibile: un corridoio è già largo una
+  cella e sotto non si può andare. È la conseguenza diretta della regola dei
+  10ft, quindi o si accetta o si segna la strettoia con un simbolo.
+- **(A) L'apertura nel pavimento (19).** Sul livello di partenza **non c'è
+  alcun segno**: né il buco, né la trappola, né la botola. La caduta porta a
+  un'isola su un'altra tavola e questa non dice che di lì si scende. Le scale
+  hanno la loro nota `(id Llivello)`: serve la stessa cosa, e un simbolo per
+  il buco.
+- **(A) Dove porta un portale.** Il cerchio viola tratteggiato c'è, ma non
+  dice **dove** si esce - le scale sì. Stessa nota, stesso posto.
+
+### Random Architecture Table
+
+- **(A/C) Diciannove risultati su venti sono solo testo, e per cinque il prop
+  esiste già.** In `dungeongen/map/_props/` ci sono `Fountain`, `Column`
+  (tonda o quadrata), `Altar`, `Dias`, `Coffin`, `Rock` (tre misure) e
+  `Stairs` - e sappiamo appenderne uno a una cella, perché è quello che
+  `_quieten_stair_alcoves` fa con la scala. Corrispondenze dirette:
+  **fontana** (3) → `Fountain`, **pilastri lungo i lati** (7) → `Column`,
+  **catacombe** (8) → `Coffin`, **plinto sacrificale** (10) → `Dias` o
+  `Altar`, **statua** (1) → `Altar`/`Dias`, il meno esatto dei cinque.
+  Attenzione: solo alcuni sono in `PropType`; `Fountain` e `Stairs` si
+  costruiscono direttamente.
+  Restano senza corrispondenza **1d4 pozze** (4), **corso d'acqua** (14),
+  **botola con scala** (13), **serie di alcove** (2), **caverna naturale**
+  (15) - lì o si disegna nell'overlay o si lascia al registro.
+- **(C) Le macerie dei contenuti del passaggio** (70-80) avrebbero `Rock`, se
+  si decide che vanno viste.
+- **(A) Il "1d4 pozze" non tira nemmeno il d4**: la riga arriva letterale. Da
+  sistemare comunque, disegno o no.
+
+### Room Contents / Passage Contents
+
+- **(A) "There's a secret door hidden in this room."** Il tiro dice che in
+  quella stanza c'è una porta segreta e non produce niente: nessun nodo,
+  nessun muro aperto, nessuna "S". O diventa una porta segreta vera (con un
+  ramo dietro, come ora fanno quelle del passaggio) o va detto nella voce che
+  è solo un aggancio narrativo. Esce dal 10-30% di sei righe diverse, quindi
+  non è raro.
+- **(C) Trappole nei corridoi.** 95-98 dei contenuti del passaggio tira
+  quattro trappole vere, con DC e danni, e sulla mappa non c'è niente: le
+  stanze hanno il pallino di gravità, i passaggi no.
+- **(C) Il pallino di gravità è per stanza.** Un corridoio con un incontro
+  Difficile e uno vuoto si disegnano uguali.
+
+### Stairs Table
+
+- **(C) Salita e discesa.** La nota dice il livello d'arrivo, quindi su/giù si
+  deduce; i gradini sono orientati dalla direzione di salita. Non è mai stato
+  verificato che un lettore lo colga - una freccia o un "▲/▼" nella nota
+  sarebbe esplicito.
+
+### Trap Table e Secret Door Table
+
+- **(C) Nessuna trappola è mai disegnata**, da nessuna delle tre strade che le
+  producono (contenuti del passaggio, porta trappolata, porta segreta
+  trappolata 5-6). Solo registro.
+- **(A) Il pericolo "a trap" del d6 dei pericoli non tira sulla Trap Table**,
+  quindi resta senza DC e senza danno mentre le altre trappole li hanno.
+
+### Dungeon Type Table
+
+- **(C) Non influenza niente**, né il disegno né gli altri tiri: stesso seme,
+  stesso dungeon, cambia solo la riga d'intestazione. Prima di dargli un
+  effetto va deciso se la fonte lo prevede o se sarebbe una nostra invenzione.
+
+### Starting Area Table
+
+- **(C) I cinque risultati non si distinguono** sulla mappa: `open_entrance`
+  diventa un d4 fra passaggio e stanza e resta solo la riga *"Open
+  entrance."*. Il punto d'ingresso però è marcato, quindi manca la
+  distinzione, non il segno.
+
 ## Invariants currently held
 
 Re-check these after any change to layout or the bridge; they are what the

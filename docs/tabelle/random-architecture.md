@@ -34,6 +34,9 @@ non cambia la forma del corridoio.
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 Diverse righe descrivono qualcosa che avrebbe un posto sulla mappa - i pilastri,
 le catacombe, la botola, il corso d'acqua, la caverna naturale. Oggi nessuna di
 esse esiste come geometria. dungeongen ha dei *prop* propri (colonne, acqua) che

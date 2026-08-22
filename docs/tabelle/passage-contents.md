@@ -27,6 +27,9 @@ sull'ultima riga.
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 Il payload della riga 99-100 porta `treasure_rolls: 1` e `modifier: 30`, e
 nessuno dei due viene letto: il codice tira un solo tesoro al livello corrente
 senza bonus. Va deciso se il `modifier` doveva alzare il tier del tesoro o

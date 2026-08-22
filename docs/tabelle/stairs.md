@@ -64,3 +64,8 @@ alla marcia.
   un passaggio, poi una stanza, poi ripiega su `passages[0]` e li mette su un
   corridoio senza rapporto. `_quieten_stair_alcoves` glieli toglie e li
   ridisegna.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

@@ -31,6 +31,10 @@ scritto nel log, cosa viene disegnato, e dove no.
 Documenti vicini: [`LESSONS.md`](../../LESSONS.md) per come funziona il
 motore di disegno, [`TODO.md`](../../TODO.md) per quello che resta aperto.
 
+Quello che le tabelle producono e la mappa **non sa ancora disegnare** - o
+disegna come un'altra cosa - è raccolto in [`TODO.md`](../../TODO.md), sezione
+9, tabella per tabella. Le note qui lo segnalano riga per riga e rimandano lì.
+
 `tests/test_docs_tabelle.py` verifica che ogni riga di ogni tabella abbia la
 sua riga qui, in entrambi i versi: una riga aggiunta a `tables.py` e non
 documentata fa fallire la suite, e così una riga descritta qui che non esiste

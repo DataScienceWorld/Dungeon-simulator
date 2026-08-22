@@ -52,3 +52,8 @@ non con il livello del dungeon:
   altre: una "Trapdoor" può quindi accompagnarsi a tre effetti minori.
 - `1-6 Poison darts` con un gruppo di livello 1 o 2 darebbe zero o meno dadi:
   il `max(1, ...)` lo tiene a uno.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

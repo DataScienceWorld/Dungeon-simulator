@@ -26,6 +26,9 @@ tutto tranne questa riga.
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 È la tabella con il divario più grande fra quello che promette e quello che fa.
 Le leve ovvie, se un giorno si vuole che conti:
 

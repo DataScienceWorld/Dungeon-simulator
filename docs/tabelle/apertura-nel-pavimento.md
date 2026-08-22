@@ -32,6 +32,9 @@ dicesse perché.
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 Che una trappola tiri **quattro volte** sulla Trap Table è la convenzione della
 fonte, applicata ovunque nel codice, ma qui la trappola *è* la fossa: quattro
 effetti scollegati (dardi avvelenati, gas, lame) per un buco nel pavimento

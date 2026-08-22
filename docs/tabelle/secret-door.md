@@ -47,3 +47,8 @@ sopravvivere: è tutto il punto di una porta segreta.
 *"There's a secret door hidden in this room."* del [Room
 Contents](room-contents.md) **non passa da questa tabella** e non produce niente
 sulla mappa: è un aggancio narrativo.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

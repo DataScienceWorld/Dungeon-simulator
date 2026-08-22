@@ -25,7 +25,12 @@ sapere quale tavola mostrare per prima.
 
 ## Da indagare
 
-Un'entrata aperta e un corridoio qualunque sono indistinguibili sulla mappa.
-L'ingresso del dungeon è l'unico punto che un lettore cerca subito, e non ha
-alcun marcatore: né icona, né etichetta. L'isola giusta è già marcata
-(`is_entrance`), quindi manca solo il segno.
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
+Un'entrata aperta e un corridoio qualunque sono indistinguibili fra loro: il
+d4 li rende la stessa cosa e la riga *"Open entrance."* resta l'unica traccia.
+Il **punto** d'ingresso però è marcato - cerchio pieno ottone con l'etichetta
+"Ingresso" sull'isola con `is_entrance`, cerchio tratteggiato con "Arrivo"
+sulle altre - quindi manca solo la distinzione fra i cinque risultati, non il
+segno.

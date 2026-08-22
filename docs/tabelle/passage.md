@@ -60,3 +60,8 @@ ramo esce dalla parete laterale della cella in cui il passaggio si trova, e il
 layout registra la cella di partenza (`_takeoff`) perché il bridge possa
 ricongiungerlo al tronco: senza, dungeongen vede un passaggio da una cella che
 sfiora un altro corridoio e ci mette un muro in mezzo.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

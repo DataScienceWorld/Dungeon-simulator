@@ -69,3 +69,8 @@ this room."* nel registro e **non disegnano niente**: non generano un nodo, non
 aprono un muro, non mettono il marchio "S". Sono un aggancio narrativo, non una
 via d'uscita. Le porte segrete che esistono davvero sulla mappa vengono dalla
 [Door Table](door.md) 46-50 e dalla [Passage Table](passage.md) 6 e 14.
+
+## Da indagare
+
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.

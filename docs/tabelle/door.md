@@ -100,6 +100,9 @@ stanza), `d4_passage_room` (d4 1 passaggio, altrimenti stanza).
 
 ## Da indagare
 
+> L'elenco completo di quello che le tabelle dicono e la mappa non sa ancora
+> dire sta in [`TODO.md`](../../TODO.md), sezione 9.
+
 Tre righe (26-30 "empty doorway", 51-55 "empty archway, no door", 96-100
 "smashed and hanging off its hinges") descrivono una soglia **senza** un
 battente, e vengono disegnate con il rettangolo di porta come tutte le altre.
