@@ -38,12 +38,23 @@ Ogni tiro produce una riga `[Passage d20=N] <testo>` nella voce del passaggio.
 ## Cose che valgono per più righe
 
 **Il minimo di una cella.** Diversi risultati non danno lunghezza al passaggio
-(una porta nel muro, "ends in an open entrance", un ridimensionamento prima di
-qualsiasi movimento). Un passaggio è un luogo, non una cerniera: avanza sempre
-di almeno `DEFAULT_PASSAGE_WIDTH_FT` = 5 ft, che sulla griglia è **una cella
-da 10 ft**, e lo dice (`[Layout] Il tiro non dava lunghezza propria al
-passaggio: sulla mappa percorre comunque il minimo di 10ft ...`). È la stessa
-regola dei 5 ft che diventano una cella, applicata alla lunghezza.
+(una porta nel muro, "ends in an open entrance"). Un passaggio è un luogo, non
+una cerniera: avanza sempre di almeno `DEFAULT_PASSAGE_WIDTH_FT` = 5 ft, che
+sulla griglia è **una cella da 10 ft**, e lo dice (`[Layout] Il tiro non dava
+lunghezza propria al passaggio: sulla mappa percorre comunque il minimo di
+10ft ...`). È la stessa regola dei 5 ft che diventano una cella, applicata
+alla lunghezza.
+
+**Ma non a un ridimensionamento che apre il passaggio.** Se il primo tiro è un
+15 o un 16, quello non è un cambio a metà strada: è *quello che il passaggio
+è*, e vale dalla prima cella. Prima il minimo veniva preso lì, alla larghezza
+vecchia, e il passaggio 16 del seed 72 - che tira l'allargamento a 20ft e poi
+"goes 15 ft and ends at a door" - veniva fuori largo 10ft per la prima cella e
+20 per le altre due: tre celle di corridoio per un tiro che ne chiedeva due.
+Su 40 seed, dei 101 passaggi che iniziano con un ridimensionamento **99 sono
+ora un tratto solo** alla larghezza tirata; i due che non lo sono hanno un
+secondo ridimensionamento più avanti. Prima: 5 tratti soli, e 43 con una cella
+stretta appiccicata davanti.
 
 **La larghezza resta.** Un tiro 15 o 16 non riguarda il tratto fino al bivio
 successivo: riguarda **il passaggio**. La larghezza viene portata avanti in

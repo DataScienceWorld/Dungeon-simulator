@@ -974,12 +974,26 @@ class _Layout:
                 # opening on the right" drew as a single 10ft stub.
                 moved = False
             elif etype == "resize":
-                if not ensure_min_length():
-                    break
                 # A rulebook "narrows" roll floors at 5ft and "widens" floors
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
-                width = _cells(max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT))
+                new_width = _cells(max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT))
+                if not moved and len(runs[-1]["points"]) == 1:
+                    # Nothing walked yet, so this is not a change partway along
+                    # the passage - it is what the passage *is*. Widening the
+                    # run in place rather than closing it and opening another
+                    # keeps the whole thing at its rolled width; the minimum
+                    # 10ft used to be taken first, at the old one, so seed 72's
+                    # passage 16 rolled "widens to 20 ft" and came out 10ft
+                    # wide for its first cell and 20 for the rest.
+                    width = new_width
+                    side = event.get("side")
+                    runs[-1]["width"] = width
+                    runs[-1]["side"] = side
+                    continue
+                if not ensure_min_length():
+                    break
+                width = new_width
                 side = event.get("side")
                 runs.append({"width": width, "side": side, "cells": set(),
                              "points": [(x, y)]})

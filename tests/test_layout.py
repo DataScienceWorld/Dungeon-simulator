@@ -700,3 +700,45 @@ def test_a_widened_passage_that_runs_out_of_room_stops_and_says_so():
                 stopped += 1
     assert stopped >= 2, f"expected a few wide passages to run out of room, found {stopped}"
     assert opened > 20, f"expected plenty of secret entrances, found {opened}"
+
+
+def test_a_passage_that_opens_by_widening_is_wide_from_its_first_cell():
+    """"Passage widens to 20 ft" as a passage's *first* roll says what that
+    passage is, not what it becomes partway along it.
+
+    The minimum-length rule used to be applied at the resize too: the passage
+    walked its 10ft at the old width and only then widened, so seed 72's
+    passage 16 - which rolls the widening and then "goes 15 ft and ends at a
+    door" - came out 10ft wide for its first cell and 20 for the other two.
+    Three cells of corridor for a roll that asked for two.
+
+    Over 40 seeds, of the 101 passages whose first roll is a resize, 99 now
+    come out as a single run at the rolled width; the two that do not have a
+    second resize of their own further along. Before: 5 single runs, and 43
+    with a narrow cell stuck on the front."""
+    single = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        starts_wide = {}
+        for node in dungeon.all_nodes():
+            events = node.geo.get("events") or []
+            if node.kind != "passage" or not events or events[0]["type"] != "resize":
+                continue
+            resizes = [e for e in events if e["type"] == "resize"]
+            if len(resizes) > 1:
+                continue  # it changes again later, so more than one run is right
+            starts_wide[node.id] = max(1, round(events[0]["width_ft"] / 10.0))
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                runs = {}
+                for corridor in island["corridors"]:
+                    if corridor["id"] in starts_wide:
+                        runs.setdefault(corridor["id"], []).append(corridor["width"])
+                for node_id, widths in runs.items():
+                    want = starts_wide[node_id]
+                    assert widths == [want], (
+                        f"seed {seed} passage #{node_id}: rolled {want} cells wide from "
+                        f"its first roll and came out as runs {widths}"
+                    )
+                    single += 1
+    assert single > 40, f"expected plenty of passages that open by widening, found {single}"
