@@ -83,13 +83,22 @@ cella. La larghezza al momento dell'arrivo viaggia con l'uscita segreta
 sbagliato: un allargamento tirato *dopo* lo scontro resta nella voce anche se
 la camminata non ci è mai arrivata.
 
-**Ma dungeongen non sa disegnare un corridoio largo.** `Passage.__init__`
-rifiuta con un `ValueError` qualunque cosa non sia esattamente una cella
-(*"Passage must be exactly one cell wide"*), e il suo adattatore non guarda
-nemmeno il campo `width` del modello. Quindi oggi la larghezza si vede **solo
-nel renderer di ripiego RoughJS**, che la disegna davvero, e non nell'arte di
-dungeongen, che è quella che si usa sempre. L'unica strada è consegnare il
-tratto largo come una **stanza** invece che come un passaggio - vedi
+**Ma un passaggio consegnato largo viene disegnato stretto.** Non c'è un
+errore: `add_passage` accetta, la conversione riesce, e il campo `width` del
+modello di layout **non viene mai letto** dall'adattatore. Misurato
+consegnando lo stesso corridoio con `width` 1, 2 e 3: viene fuori sempre di
+8x1 celle. (Un `ValueError` *esiste* - `Passage.__init__` rifiuta punti che
+formino un rettangolo più largo di una cella, *"Passage must be exactly one
+cell wide"* - ma l'adattatore costruisce sempre punti da una cella, quindi non
+scatta mai.) Oggi la larghezza si vede quindi **solo nel renderer di ripiego
+RoughJS**, che la disegna davvero, e mai nell'arte di dungeongen, che è quella
+che si usa sempre.
+
+La strada c'è ed è verificata: consegnare il tratto largo come una **stanza**.
+Provato con stanza → passaggio → galleria 4x3 → passaggio → stanza: viene fuori
+**una regione sola**, quindi nessun muro fra la galleria e i corridoi ai due
+capi. Consegnare invece due corsie parallele da una cella **non** funziona:
+misurate, restano due regioni distinte, quindi con un muro in mezzo. Vedi
 [`TODO.md`](../../TODO.md) sezione 9.
 
 **Il passaggio si ferma contro le stanze già disegnate.** Chi disegna prima ha

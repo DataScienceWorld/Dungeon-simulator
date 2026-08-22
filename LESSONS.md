@@ -52,6 +52,12 @@ measurement that was quietly answering a different question.
   `REGION_INFLATE` below - it used to answer yes on all four sides of
   everything. That probe is trustworthy now, but only because the inflation is
   off.
+- **Don't read a rejection into a library that is only ignoring you.** The
+  adapter accepts a passage of any `width` and draws one cell: no error, no
+  warning, the field is simply never read. There *is* a `ValueError` in
+  `map/passage.py` about one cell, but it guards points the adapter never
+  builds. Hand the thing over and measure what comes out - three widths, one
+  result - rather than concluding from a `raise` you found by grepping.
 - **Don't patch a library constant around the conversion only.**
   `Map._make_regions` runs inside `Map.render`, so a patch that is restored
   after `convert_dungeon` changes nothing at all and reads as "the setting has
@@ -116,6 +122,12 @@ The single most productive source of off-by-one bugs in this codebase.
   floor. That is where the box beside the stairs alcove came from.
 
 ### Worth knowing
+
+A **room** is the only way to draw floor wider than one cell, and it joins up
+properly: room - passage - wide room - passage - room comes out as a single
+region, so no wall appears at either end, provided the passages name the wide
+room as their `start_room`/`end_room`. Two parallel one-cell passages do *not*
+merge - measured, two regions, wall between them.
 
 Drawing order in `Map.render`, which is what makes a painted opening possible:
 crosshatch, then per-region fills, shadows, grid and props (each clipped to

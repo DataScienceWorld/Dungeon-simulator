@@ -562,23 +562,34 @@ misura dopo, e un test che fallisca senza la modifica.
 
 ### Passage Table
 
-- **(B) Un corridoio allargato non si può disegnare come corridoio.** La riga
-  16 tira `(1d6÷2)×10`, minimo 10ft, quindi 20 o 30 ft in poco meno della metà
-  dei casi, e la larghezza resta valida da lì in poi (ora la portiamo avanti
-  anche oltre un bivio, giù per la via che tira dritto). Ma
-  `dungeongen/map/passage.py` rifiuta con un `ValueError` qualunque passaggio
-  che non sia esattamente una cella - *"Passage must be exactly one cell
-  wide"* - e il suo adattatore non legge nemmeno il campo `width` del modello
-  di layout. Oggi la larghezza si vede solo nel ripiego RoughJS, che la disegna
-  davvero, e mai nell'arte di dungeongen, che è quella che si usa sempre: su 20
-  seed sono **71 tratti larghi** (47 da 2 celle, 24 da 3) disegnati stretti.
+- **(A) Un corridoio allargato viene disegnato stretto, e sappiamo come
+  rimediare.** La riga 16 tira `(1d6÷2)×10`, minimo 10ft, quindi 20 o 30 ft in
+  poco meno della metà dei casi, e la larghezza resta valida da lì in poi. Ma
+  l'adattatore di dungeongen **non legge il campo `width`**: misurato
+  consegnando lo stesso corridoio con `width` 1, 2 e 3, viene fuori sempre di
+  8x1 celle, senza alcun errore. Su 20 seed sono **71 tratti larghi** (47 da 2
+  celle, 24 da 3) disegnati stretti.
 
-  L'unica strada è consegnare il tratto largo come una **stanza** - un
-  rettangolo w×h - come già si fa con l'alcova delle scale. Il precedente
-  esiste, e con lui i suoi problemi: la stanza è una regione a sé, quindi
-  servono aperture vere ai due capi (altrimenti è una scatola sigillata, che è
-  esattamente come l'alcova era nata), va spenta la decorazione d'angolo, e va
-  visto cosa ne fanno `_claim_takeoff_cell` e la logica degli incroci.
+  *(Nota, perché è stato scritto male una volta: un `ValueError` "Passage must
+  be exactly one cell wide" esiste in `map/passage.py`, ma guarda i punti che
+  gli si danno, e l'adattatore ne costruisce sempre da una cella - non scatta
+  mai. dungeongen non rifiuta niente: ignora.)*
+
+  **La strada è consegnare il tratto largo come una stanza, ed è verificata.**
+  Provato con stanza → passaggio → galleria 4x3 → passaggio → stanza:
+  `_make_regions` ne fa **una regione sola** (5 elementi), quindi nessun muro
+  fra la galleria e i corridoi ai due capi - il timore che venisse una scatola
+  sigillata, come era nata l'alcova, era infondato: basta che i due passaggi
+  la nominino come `start_room`/`end_room`.
+
+  Resta da fare: spegnere la decorazione d'angolo e il numero di stanza (come
+  per l'alcova, `_quieten_stair_alcoves`), decidere cosa succede quando la
+  galleria gira, e vedere cosa ne fanno `_claim_takeoff_cell` e la logica
+  degli incroci. Le celle vere del tratto sono già registrate in
+  `corridors[...]["cells"]`.
+
+  **Due corsie parallele da una cella non funzionano**: misurate, restano due
+  regioni distinte, quindi con un muro in mezzo. Quella strada è chiusa.
 - **(C) "Narrows to 5 ft" (15).** Invisibile in ogni caso: un corridoio è già
   largo una cella e sotto non si può andare. È la conseguenza diretta della
   regola dei 10ft, quindi o si accetta o si segna la strettoia con un
