@@ -328,3 +328,101 @@ def test_a_room_with_nowhere_to_go_does_not_have_its_branches_explored():
     # into a room rather than by a room of its own. The layout reports every
     # place it stops, so there is no residue.
     assert behind == 0, f"{behind} of {total_nodes} nodes sit behind an unplaced room"
+
+
+def _floor_openings(seeds=range(60)):
+    """Every passage whose roll put an opening in its floor."""
+    for seed in seeds:
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for node in dungeon.all_nodes():
+            if node.kind != "passage":
+                continue
+            if any("Opening in the floor" in line for line in node.lines):
+                yield seed, node
+
+
+def test_an_opening_in_the_floor_forks_down_and_straight_on():
+    """A hole in the floor is a choice, not a one-way trip.
+
+    It used to send you down and stop the passage there, so the corridor
+    *past* the opening simply did not exist - and nothing in the log said why
+    the gallery ended. Same rule as the T-junction and the side passage: two
+    ways on, two entries. The way down is at the level below, so the layout
+    starts it on an island of its own.
+
+    The only opening with one way on is a secret trapdoor nobody found."""
+    forked = single = 0
+    for seed, node in _floor_openings():
+        turns = [e.get("turn") for e in node.geo.get("events", []) if e["type"] == "child"]
+        unnoticed = any("goes unnoticed" in line for line in node.lines)
+        if unnoticed:
+            assert turns == [None], (
+                f"seed {seed} passage #{node.id}: nobody found the trapdoor, so the only "
+                f"way on is straight ahead, got {turns}"
+            )
+            single += 1
+        else:
+            assert turns == [None, None], (
+                f"seed {seed} passage #{node.id}: an opening in the floor is down *and* "
+                f"straight on, got {turns}"
+            )
+            # Down first, then on. Children can be fewer than the ways on -
+            # a branch the map will never reach is cut and its event stays
+            # behind in the log - so this is only checked when both survived.
+            levels = [child.level for child in node.children]
+            assert len(levels) <= 2
+            if len(levels) == 2:
+                assert levels[0] > node.level and levels[1] == node.level, (
+                    f"seed {seed} passage #{node.id}: expected the way down then the way "
+                    f"on, got levels {levels} from a passage on level {node.level}"
+                )
+            forked += 1
+    assert forked > 40 and single > 5, f"forked {forked}, single {single}"
+
+
+def test_what_the_opening_in_the_floor_is_gets_rolled_and_written_down():
+    """The table row says there is an opening, not what it is. That is a d3 of
+    its own - a trap, a secret trapdoor, or a floor that has given way - and
+    the roll goes in the log like every other, because a reader cannot get it
+    from anywhere else."""
+    kinds = set()
+    checked = 0
+    for seed, node in _floor_openings():
+        rolled = [line for line in node.lines if line.startswith("[Opening d3=")]
+        assert len(rolled) == 1, (
+            f"seed {seed} passage #{node.id}: expected exactly one opening roll, "
+            f"got {rolled}"
+        )
+        kinds.add(rolled[0].split("] ", 1)[1])
+        checked += 1
+    assert checked > 40, f"expected plenty of openings, found {checked}"
+    assert len(kinds) == 3, f"all three d3 results should turn up, saw {kinds}"
+
+
+def test_a_secret_trapdoor_nobody_notices_leaves_no_way_down():
+    """Same as an unnoticed secret door: it stays in the log, because the dice
+    produced it, and produces nothing beyond, because nobody found it. A found
+    one opens the way down like any other hole."""
+    found = missed = 0
+    for seed, node in _floor_openings():
+        if not any("secret trapdoor" in line for line in node.lines):
+            continue
+        below = [child for child in node.children if child.level > node.level]
+        if any("goes unnoticed" in line for line in node.lines):
+            assert not below, (
+                f"seed {seed} passage #{node.id}: the trapdoor went unnoticed but there "
+                f"is still a way down"
+            )
+            missed += 1
+        else:
+            assert any("The trapdoor is found" in line for line in node.lines)
+            # Only when both ways on survived: a branch the map will never
+            # reach is cut, and then the way down is missing for a reason that
+            # has nothing to do with the trapdoor.
+            if len(node.children) == 2:
+                assert below, (
+                    f"seed {seed} passage #{node.id}: the trapdoor was found but there "
+                    f"is no way down"
+                )
+            found += 1
+    assert found > 3 and missed > 5, f"found {found}, missed {missed}"

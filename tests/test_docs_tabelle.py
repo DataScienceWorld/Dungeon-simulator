@@ -18,6 +18,7 @@ import pytest
 
 from dungeon_simulator.tables import (
     DOOR_TABLE,
+    FLOOR_OPENING_TABLE,
     DUNGEON_SIZE_TABLE,
     DUNGEON_TYPE_TABLE,
     PASSAGE_CONTENTS_TABLE,
@@ -33,31 +34,35 @@ from dungeon_simulator.tables import (
 
 DOCS = pathlib.Path(__file__).resolve().parent.parent / "docs" / "tabelle"
 
-TABLE_DOCS = {
-    "dungeon-size.md": DUNGEON_SIZE_TABLE,
-    "dungeon-type.md": DUNGEON_TYPE_TABLE,
-    "starting-area.md": STARTING_AREA_TABLE,
-    "passage.md": PASSAGE_TABLE,
-    "passage-contents.md": PASSAGE_CONTENTS_TABLE,
-    "door.md": DOOR_TABLE,
-    "stairs.md": STAIRS_TABLE,
-    "room-contents.md": ROOM_CONTENTS_TABLE,
-    "random-architecture.md": RANDOM_ARCHITECTURE_TABLE,
-    "secret-door.md": SECRET_DOOR_TABLE,
-    "trap.md": TRAP_TABLE,
-}
+# (file, table). A list rather than a dict so one file could hold two tables
+# if it ever needs to.
+TABLE_DOCS = [
+    ("dungeon-size.md", DUNGEON_SIZE_TABLE),
+    ("dungeon-type.md", DUNGEON_TYPE_TABLE),
+    ("starting-area.md", STARTING_AREA_TABLE),
+    ("passage.md", PASSAGE_TABLE),
+    ("apertura-nel-pavimento.md", FLOOR_OPENING_TABLE),
+    ("passage-contents.md", PASSAGE_CONTENTS_TABLE),
+    ("door.md", DOOR_TABLE),
+    ("stairs.md", STAIRS_TABLE),
+    ("room-contents.md", ROOM_CONTENTS_TABLE),
+    ("random-architecture.md", RANDOM_ARCHITECTURE_TABLE),
+    ("secret-door.md", SECRET_DOOR_TABLE),
+    ("trap.md", TRAP_TABLE),
+]
 
 
 def _label(low: int, high: int) -> str:
     return f"**{low}**" if low == high else f"**{low}-{high}**"
 
 
-@pytest.mark.parametrize("filename", sorted(TABLE_DOCS))
-def test_every_row_of_the_table_has_a_line_in_its_notes(filename):
+@pytest.mark.parametrize("filename,table", TABLE_DOCS,
+                         ids=[f"{name}-d{table.die}" for name, table in TABLE_DOCS])
+def test_every_row_of_the_table_has_a_line_in_its_notes(filename, table):
     text = (DOCS / filename).read_text(encoding="utf-8")
     missing = [
         _label(entry.low, entry.high)
-        for entry in TABLE_DOCS[filename].entries
+        for entry in table.entries
         if _label(entry.low, entry.high) not in text
     ]
     assert not missing, (
@@ -75,9 +80,12 @@ def test_the_room_tables_shape_rows_all_have_a_line():
 def test_the_notes_do_not_claim_ranges_the_table_does_not_have():
     """The other direction: a row that was narrowed or removed leaves a line
     behind describing a roll that can no longer come up."""
-    for filename, table in TABLE_DOCS.items():
+    by_file = {}
+    for filename, table in TABLE_DOCS:
+        by_file.setdefault(filename, set()).update(
+            _label(entry.low, entry.high) for entry in table.entries)
+    for filename, known in by_file.items():
         text = (DOCS / filename).read_text(encoding="utf-8")
-        known = {_label(entry.low, entry.high) for entry in table.entries}
         # only labels in the leftmost column of a table row, so a `**+15**` or
         # a bold number in the prose is not mistaken for one
         claimed = set(re.findall(r"^\|\s*(\*\*\d+(?:-\d+)?\*\*)\s*\|", text, re.M))

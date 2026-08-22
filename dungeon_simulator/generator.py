@@ -33,6 +33,7 @@ from .dice import Dice
 from .models import Dungeon, Node
 from .tables import (
     DOOR_TABLE,
+    FLOOR_OPENING_TABLE,
     DUNGEON_SIZE_TABLE,
     DUNGEON_TYPE_TABLE,
     PASSAGE_CONTENTS_TABLE,
@@ -457,9 +458,44 @@ class DungeonGenerator:
                 return
 
             if tag == "shaft":
-                sub = self.dice.d4()
-                child = self.dispatch_beyond("passage" if sub <= 2 else "room", level + 1, depth=depth + 1)
-                node.children.append(child)
+                # Two ways on, so two nodes: down the hole, or straight past
+                # it. The table row says nothing about the passage ending, and
+                # a drop in the floor is not a wall you cannot get past - it
+                # used to send you down and stop, so the corridor beyond an
+                # opening simply did not exist. Same rule as the T-junction
+                # and the side passage: where there is a choice, there are two
+                # entries.
+                #
+                # What the opening *is* is rolled for: a trap, a secret
+                # trapdoor, or a stretch of floor that has given way. Only the
+                # trapdoor changes what happens - it has to be found first.
+                open_value, open_entry = FLOOR_OPENING_TABLE.roll(self.dice)
+                opening = open_entry.payload
+                node.lines.append(f"[Opening d3={open_value}] {opening['text']}")
+                reachable = True
+                if opening["kind"] == "trap":
+                    node.lines.append(f"Trapped! {roll_trap(self.dice, self.party_level)}.")
+                elif opening["kind"] == "secret_trapdoor":
+                    roll, found = self.dice.check(dc=opening["find_dc"])
+                    if found:
+                        node.lines.append(
+                            f"The trapdoor is found (Perception {roll} vs DC {opening['find_dc']})!")
+                    else:
+                        # Same as an unnoticed secret door: it is in the log
+                        # because the dice produced it, and nowhere on the map
+                        # because nobody found it.
+                        node.lines.append(
+                            f"Perception {roll} vs DC {opening['find_dc']} - the trapdoor "
+                            f"goes unnoticed, and the way down with it.")
+                        reachable = False
+                if reachable:
+                    sub = self.dice.d4()
+                    child = self.dispatch_beyond("passage" if sub <= 2 else "room",
+                                                 level + 1, depth=depth + 1)
+                    node.children.append(child)
+                    events.append({"type": "child", "turn": None})
+                onward = self.dispatch_beyond("passage", level, depth=depth + 1)
+                node.children.append(onward)
                 events.append({"type": "child", "turn": None})
                 return
 

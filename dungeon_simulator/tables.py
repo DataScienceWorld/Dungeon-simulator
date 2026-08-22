@@ -145,6 +145,17 @@ PASSAGE_CONTENTS_TABLE = RangeTable(100, [
 ])
 
 # ---------------------------------------------------------------------------
+# Floor Opening (d3) - what the Passage Table's "opening in the floor" is
+# ---------------------------------------------------------------------------
+
+FLOOR_OPENING_TABLE = RangeTable(3, [
+    (1, 1, {"kind": "trap", "text": "A trap: the floor gives way under you."}),
+    (2, 2, {"kind": "secret_trapdoor", "text": "A secret trapdoor - it takes finding.",
+            "find_dc": 15}),
+    (3, 3, {"kind": "collapsed", "text": "A hole where the floor has simply given way."}),
+])
+
+# ---------------------------------------------------------------------------
 # Door Table (d100)
 # ---------------------------------------------------------------------------
 

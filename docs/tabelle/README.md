@@ -17,6 +17,7 @@ scritto nel log, cosa viene disegnato, e dove no.
 | Dungeon Type | d10 | [dungeon-type.md](dungeon-type.md) |
 | Starting Area | d10 | [starting-area.md](starting-area.md) |
 | Passage | d20 | [passage.md](passage.md) |
+| Apertura nel pavimento | d3 | [apertura-nel-pavimento.md](apertura-nel-pavimento.md) |
 | Passage Contents | d100 | [passage-contents.md](passage-contents.md) |
 | Door | d100 | [door.md](door.md) |
 | Stairs | d20 | [stairs.md](stairs.md) |
