@@ -796,3 +796,183 @@ def test_a_flight_of_stairs_has_both_its_ends_on_a_map():
     assert departures > 40 and arrivals > 40, (
         f"partenze {departures}, arrivi {arrivals}"
     )
+
+
+_STOPPED_AGAINST_SOMETHING = (
+    "arriva contro la parete",
+    "parte gia' dentro",
+    "non ha spazio per proseguire",
+)
+
+
+def _all_nodes(dungeon):
+    out = []
+
+    def walk(node):
+        out.append(node)
+        for child in node.children:
+            walk(child)
+
+    walk(dungeon.root)
+    return out
+
+
+def _drawn_cells_by_node(layout):
+    """Every cell each node put on the map, by node id.
+
+    A dead end or the map edge is drawn as a stub corridor of its own, filed
+    under `cap<id>` rather than the id - it is still that node's floor, and an
+    arm of a junction that ends immediately is very often exactly that."""
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    cells = {}
+    for islands in layout.values():
+        for island in islands:
+            for corridor in island["corridors"]:
+                key = corridor["id"]
+                if isinstance(key, str) and key.startswith("cap"):
+                    key = int(key[3:])
+                here = cells.setdefault(key, set())
+                here |= {tuple(cell) for cell in corridor.get("cells", ())}
+                points = bridge._dedupe([tuple(p) for p in corridor["points"]])
+                if len(points) >= 2:
+                    here |= bridge._path_cells(
+                        bridge._pad_single_cell(bridge._grid_cell_path(points)))
+            for room in island["rooms"]:
+                xs = [c[0] for c in room["corners"]]
+                ys = [c[1] for c in room["corners"]]
+                cells.setdefault(room["id"], set()).update(
+                    (x, y)
+                    for x in range(int(min(xs)), int(max(xs)))
+                    for y in range(int(min(ys)), int(max(ys))))
+    return cells
+
+
+def _trunk_points(layout, node_id):
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    points = []
+    for islands in layout.values():
+        for island in islands:
+            for corridor in island["corridors"]:
+                if corridor["id"] == node_id:
+                    points.extend(tuple(p) for p in corridor["points"])
+    return bridge._dedupe(points)
+
+
+def test_a_t_junction_has_an_arm_on_each_side_of_its_last_cell():
+    """"...and comes to a T-junction" is a T on the map, not a corner.
+
+    The passage walks the length it rolled - three cells for 30ft - and the
+    cell it ends on has one cell of corridor to its left and one to its right.
+    There is no forward at a T, which is why both arms are branches and the
+    passage itself ends here.
+
+    Measured over 40 seeds: 66 T-junctions, 62 with both arms exactly there.
+    The other four have an arm that runs straight into a room already on the
+    map: it stops against that wall and opens into it as a secret entrance,
+    and says so in its own entry - the same precedence rule as everywhere
+    else, so those are allowed only when the entry explains them."""
+    seen = blocked = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        cells = _drawn_cells_by_node(layout)
+        takeoff = {}
+        for islands in layout.values():
+            for island in islands:
+                takeoff.update({k: tuple(v)
+                                for k, v in (island.get("_takeoff") or {}).items()})
+        for node in _all_nodes(dungeon):
+            if not any("T-junction" in line for line in node.lines):
+                continue
+            assert len(node.children) == 2, (seed, node.id)
+            spots = [takeoff.get(child.id) for child in node.children]
+            if any(spot is None for spot in spots):
+                continue  # the junction itself was never drawn
+            assert spots[0] == spots[1], (seed, node.id, spots)
+            points = _trunk_points(layout, node.id)
+            if len(points) < 2:
+                continue
+            a, b = points[-2], points[-1]
+            steps = abs(b[0] - a[0]) + abs(b[1] - a[1])
+            heading = (int((b[0] - a[0]) / steps), int((b[1] - a[1]) / steps))
+            last = spots[0]
+            sides = {
+                "sinistra": (last[0] + heading[1], last[1] - heading[0]),
+                "destra": (last[0] - heading[1], last[1] + heading[0]),
+            }
+            for name, cell in sides.items():
+                seen += 1
+                if any(cell in cells.get(child.id, set()) for child in node.children):
+                    continue
+                # Allowed only when the arm says why it could not be there.
+                arm = next(
+                    (child for child in node.children
+                     if not cells.get(child.id)
+                     and any(stop in line
+                             for line in child.lines
+                             for stop in _STOPPED_AGAINST_SOMETHING)),
+                    None,
+                )
+                assert arm is not None, (
+                    f"seme {seed}: la T del nodo {node.id} non ha il braccio di "
+                    f"{name} in {cell}, e nessun ramo dice perche'"
+                )
+                blocked += 1
+    assert seen > 100, seen
+    # A ceiling, not a zero: an arm can run into a room already drawn.
+    assert blocked <= seen // 10, (blocked, seen)
+
+
+def test_a_t_junction_walks_the_length_it_rolled_before_branching():
+    """The straight run before the T is as long as the rolls say.
+
+    The T's own roll is the last of however many "continues N ft" that node
+    made - they are the same corridor going the same way - so the leg the
+    junction sits at the end of is their sum. Measured over 40 seeds: 65 of
+    66 exactly, the one short being a passage that ran into a room already
+    drawn and says so."""
+    import re
+
+    exact = short = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        layout = compute_layout(dungeon)
+        for node in _all_nodes(dungeon):
+            if not any("T-junction" in line for line in node.lines):
+                continue
+            if any("turn" == event.get("type")
+                   for event in node.geo.get("events", [])):
+                continue  # a bend of its own splits the leg; see the turn tests
+            rolled = sum(int(m.group(1))
+                         for line in node.lines
+                         for m in re.finditer(r"continues (\d+) ft", line))
+            if not rolled:
+                continue
+            points = _trunk_points(layout, node.id)
+            if len(points) < 2:
+                continue
+            leg, previous = 0, None
+            for i in range(1, len(points)):
+                a, b = points[i - 1], points[i]
+                steps = abs(b[0] - a[0]) + abs(b[1] - a[1])
+                vector = (int((b[0] - a[0]) / steps), int((b[1] - a[1]) / steps))
+                leg = leg + steps if vector == previous else steps
+                previous = vector
+            want = max(1, round(rolled / 10.0))
+            if leg == want:
+                exact += 1
+                continue
+            assert leg < want, (
+                f"seme {seed}: la T del nodo {node.id} ha tirato {rolled}ft "
+                f"({want} celle) ma ne percorre {leg}"
+            )
+            assert any(stop in line for line in node.lines
+                       for stop in _STOPPED_AGAINST_SOMETHING), (
+                f"seme {seed}: la T del nodo {node.id} percorre {leg} celle "
+                f"invece di {want} e non dice perche'"
+            )
+            short += 1
+    assert exact > 50, exact
+    assert short <= 3, short
