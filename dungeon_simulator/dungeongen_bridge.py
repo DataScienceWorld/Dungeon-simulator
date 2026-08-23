@@ -1232,7 +1232,9 @@ def _square_off_room_exits(dg_map, dg_dungeon, island) -> None:
     Where nothing is dug beyond, nothing is drawn: the wall stays solid, which
     is the truth - that branch is not on the map."""
     from dungeongen.map.exit import Exit as _MapExit
+    from dungeongen.map.room import Room as _MapRoom
     from dungeongen.map.enums import Layers as _Layers
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle
     from dungeongen.graphics.shapes import ShapeGroup as _ShapeGroup
     from dungeongen.constants import CELL_SIZE
     import skia as _skia
@@ -1256,6 +1258,133 @@ def _square_off_room_exits(dg_map, dg_dungeon, island) -> None:
     # neighbouring room that happens to back onto it must not paint a second
     # one through its flank.
     alcoves = {(stair.x + off_x, stair.y + off_y) for stair in dg_dungeon.stairs.values()}
+    span = CELL_SIZE * 0.6      # dungeongen's own doorway width
+    reach = CELL_SIZE * 0.2     # into the floor either side, where it is absorbed
+
+    for element in dg_map._elements:
+        if not isinstance(element, _MapDoor):
+            continue
+        if element.open:
+            # An open door is not a glyph, it is a hole:
+            # `Map._trace_connected_region` walks through one, so the two sides
+            # are a single region and there is no wall between them to draw a
+            # door in. dungeongen's own `Door.draw` returns immediately for
+            # these, and the first version of this pass did not - which put a
+            # door across the join between seed 72's passages 3 and 8, where
+            # the map had never drawn anything.
+            continue
+        cell = (round(element._x / CELL_SIZE), round(element._y / CELL_SIZE))
+        placed = _door_sides(element, cell, CELL_SIZE)
+        if placed is None:
+            continue
+        kind, side, far = placed
+        secret = cell in secret_cells
+
+        if kind == "cell":
+            through = _doorway_through_cell(
+                cell, hasattr(element, "_top_group"), CELL_SIZE, span,
+                dg_map.options.border_width)
+            element.get_side_shape = (
+                lambda connected, _c=_ShapeGroup(includes=[through], excludes=[]): _c)
+            if secret:
+                element.draw = lambda *args, **kwargs: None
+            continue
+
+        _, near, far_half = _wall_band(cell, side, CELL_SIZE, span, reach)
+        element.get_side_shape = (
+            lambda connected, _n=near, _f=far_half, _a=far:
+            _ShapeGroup(includes=[_f if connected is _a else _n], excludes=[]))
+
+        if secret:
+            element.draw = lambda *args, **kwargs: None
+            continue
+
+        leaf, _, _ = _wall_band(cell, side, CELL_SIZE, span,
+                                dg_map.options.border_width)
+
+        def draw(canvas, layer=None, _leaf=leaf, _map=dg_map):
+            if layer is not _Layers.OVERLAY:
+                return
+            _leaf.draw(canvas, _skia.Paint(AntiAlias=True,
+                                           Style=_skia.Paint.kFill_Style,
+                                           Color=_map.options.room_color))
+            _leaf.draw(canvas, _skia.Paint(AntiAlias=True,
+                                           Style=_skia.Paint.kStroke_Style,
+                                           StrokeWidth=_map.options.door_stroke_width,
+                                           Color=_map.options.border_color))
+
+        element.draw = draw
+
+
+def _square_off_room_exits(dg_map, dg_dungeon, island) -> None:
+    """Replace dungeongen's archway with what the roll actually said.
+
+    A room exit that never resolves into a room-to-room link - it leads to
+    stairs, a dead end, or the edge of the map - is handed over as an `Exit`
+    so the wall gets a breach. But an `Exit` is not a neutral breach: its own
+    docstring calls it "a skewed inverted U archway extending away from the
+    dungeon", and it draws exactly that - a black blob in perspective, sitting
+    inside the room against the wall. It reads as a door standing in the
+    doorway, and it is the same shape that was announcing the way out on top
+    of secret entrances until it was taken off those.
+
+    Nor does it open anything: an `Exit` is terminal, its chip cannot cut a
+    hole (nothing can - see `_square_off_doors`), so the wall behind the blob
+    was solid. Seed 72's room 6 opens west onto passage 13 with, by its own
+    roll, "an open way through, no door" - and came out with an archway drawn
+    inside the room and an unbroken wall behind it.
+
+    What is drawn instead, on the wall itself and only where the cell on the
+    other side is actually dug:
+
+    - the roll said a door: our rectangle, the same one every other door gets.
+      80 of 293 exits over 20 seeds are this, and they had no door drawn at
+      all - dungeongen only places one where a passage meets a room.
+    - the roll said an open way: a gap, white painted over the wall and not
+      stroked. 213 of 293.
+    - a secret door: nothing, the wall stays whole and the overlay's "S" marks
+      it.
+
+    Where nothing is dug beyond, nothing is drawn: the wall stays solid, which
+    is the truth - that branch is not on the map."""
+    from dungeongen.map.exit import Exit as _MapExit
+    from dungeongen.map.room import Room as _MapRoom
+    from dungeongen.map.enums import Layers as _Layers
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle
+    from dungeongen.graphics.shapes import ShapeGroup as _ShapeGroup
+    from dungeongen.constants import CELL_SIZE
+    import skia as _skia
+
+    if not dg_dungeon.exits:
+        return
+    off_x = -dg_dungeon.bounds[0] if dg_dungeon.rooms else 0
+    off_y = -dg_dungeon.bounds[1] if dg_dungeon.rooms else 0
+    door_at = {(door["x1"], door["y1"]): door for door in island.get("doors", [])}
+
+    # The Exit elements on the map carry no usable bounds of their own (they
+    # come out as an empty box at the origin), so they are matched to the
+    # exits we handed over in order - `convert_dungeon` walks them once, in
+    # the same order.
+    handed = list(dg_dungeon.exits.values())
+    elements = [el for el in dg_map._elements if isinstance(el, _MapExit)]
+    if len(handed) != len(elements):
+        return
+    # A stairs alcove has exactly one opening, painted by
+    # `_quieten_stair_alcoves` on the side it is entered from. An exit of some
+    # neighbouring room that happens to back onto it must not paint a second
+    # one through its flank.
+    alcoves = {(stair.x + off_x, stair.y + off_y) for stair in dg_dungeon.stairs.values()}
+    # What the layout actually dug, in dungeongen's own cell coordinates.
+    # `Map.is_occupied` is not the same question - it answers for the map's
+    # occupancy grid, which says yes for a cell nothing ends up drawing - and
+    # a gap painted onto rock is a hole in a wall opening on nothing.
+    dug = {(cx + off_x, cy + off_y) for cx, cy in island.get("_route_cells", ())}
+    for _room in island.get("rooms", ()):
+        _xs = [c[0] for c in _room["corners"]]
+        _ys = [c[1] for c in _room["corners"]]
+        dug |= {(x + off_x, y + off_y)
+                for x in range(int(min(_xs)), int(max(_xs)))
+                for y in range(int(min(_ys)), int(max(_ys)))}
 
     span = CELL_SIZE * 0.6
     for exit_spec, element in zip(handed, elements):
@@ -1276,6 +1405,42 @@ def _square_off_room_exits(dg_map, dg_dungeon, island) -> None:
                 or (door is not None and door["secret"])):
             element.draw = lambda *args, **kwargs: None
             continue
+
+        # The floor of the cell the opening leads into, given to whatever is
+        # on the far side.
+        #
+        # The adapter drops a passage's end cell when an Exit stands on it,
+        # because an Exit draws its own floor there - and the archway shape
+        # that floor came with is exactly what this pass exists to remove. So
+        # the corridor now starts a cell late and the cell in between belongs
+        # to nobody: the room opens, through a painted gap, onto a plug of
+        # rock, with the corridor walled off behind it. Seed 72's room 20,
+        # passage 30 and stairs 47 read as three pieces that do not meet;
+        # measured over 40 seeds, 60 of 529 painted openings were like this.
+        #
+        # Handing that cell back as a plain square, and only to the side
+        # away from the room, puts the corridor's region back in one piece
+        # and leaves the only wall where we want it - on the room's own wall,
+        # which is where the gap is painted. The room side stays empty: its
+        # floor is its own, and lending it a cell outside would draw a bump
+        # on its outline.
+        _x0, _y0 = beyond[0] * CELL_SIZE, beyond[1] * CELL_SIZE
+
+        def side_shape(connected, _x0=_x0, _y0=_y0, _exit=element):
+            if isinstance(connected, _MapRoom) and any(
+                    not isinstance(other, _MapRoom) for other in _exit.connections):
+                # Something on the far side will take the cell; the room's
+                # floor is its own.
+                return _ShapeGroup(includes=[], excludes=[])
+            # Nothing else is there to take it - a one-cell dead-end stub
+            # whose only cell is this one is swallowed whole by the Exit, so
+            # no passage is ever connected to ask. Give it to the room: the
+            # nook comes out drawn as part of the room, walls and all, which
+            # is what a 10ft stub off a wall looks like anyway.
+            return _ShapeGroup(
+                includes=[_Rectangle(_x0, _y0, CELL_SIZE, CELL_SIZE)], excludes=[])
+
+        element.get_side_shape = side_shape
 
         band, _, _ = _wall_band(cell, side, CELL_SIZE, span,
                                 dg_map.options.border_width)

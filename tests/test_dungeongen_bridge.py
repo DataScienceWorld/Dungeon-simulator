@@ -1492,11 +1492,23 @@ def test_a_room_exit_is_drawn_as_what_the_roll_said_not_as_an_archway():
     )
 
 
-def test_a_room_exit_contributes_no_chip_of_its_own():
-    """An `Exit`'s chip cannot open anything - nothing can, two regions that
-    meet on a grid line are both outlined along it - and left in place it is
-    one more shape to be outlined somewhere it is not wanted. The opening is
-    painted instead, so the chip goes."""
+def test_a_room_exit_hands_over_a_plain_cell_of_floor_and_no_archway():
+    """An `Exit`'s own chip is an archway - "a skewed inverted U extending
+    away from the dungeon" - and it cannot open anything anyway: two regions
+    that meet on a grid line are both outlined along it. The opening is
+    painted instead, so the archway goes.
+
+    What the Exit still has to hand over is the *floor* of the cell it stands
+    on. The adapter drops a passage's end cell where an Exit is, because the
+    Exit draws that floor; with the archway removed and nothing in its place,
+    the room opened through a painted gap onto a plug of rock with the
+    corridor walled off a cell further along. So the shape is a plain square
+    of exactly one cell, on the grid, and it goes to the side away from the
+    room - the room's own floor is its own."""
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.graphics.shapes import Rectangle as _Rectangle
+    from dungeongen.map.exit import Exit as _MapExit
+
     checked = 0
     for seed in range(12):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
@@ -1507,7 +1519,6 @@ def test_a_room_exit_contributes_no_chip_of_its_own():
                 built = bridge.build_dungeongen_dungeon(island)
                 if not built.exits:
                     continue
-                from dungeongen.map.exit import Exit as _MapExit
                 with bridge._region_inflation():
                     dg_map = bridge._convert_dungeon(built, show_numbers=False)
                     bridge._square_off_room_exits(dg_map, built, island)
@@ -1515,10 +1526,25 @@ def test_a_room_exit_contributes_no_chip_of_its_own():
                         if not isinstance(element, _MapExit):
                             continue
                         assert "get_side_shape" in vars(element), (
-                            f"seed {seed}: a room exit still has dungeongen's own chip"
+                            f"seme {seed}: un'uscita ha ancora il pezzo di dungeongen"
                         )
-                        assert not element.get_side_shape(None).includes, (
-                            f"seed {seed}: a room exit still hands over a chip"
+                        shapes = element.get_side_shape(None).includes
+                        # An exit onto nothing draws nothing at all.
+                        if not shapes:
+                            checked += 1
+                            continue
+                        assert len(shapes) == 1 and isinstance(shapes[0], _Rectangle), (
+                            f"seme {seed}: l'uscita consegna {shapes}, non un quadrato"
+                        )
+                        rect = shapes[0]
+                        bounds = rect.bounds
+                        assert (round(bounds.width), round(bounds.height)) == (
+                            round(CELL_SIZE), round(CELL_SIZE)), (
+                            f"seme {seed}: il pavimento dell'uscita e' "
+                            f"{bounds.width}x{bounds.height}, non una cella"
+                        )
+                        assert bounds.x % CELL_SIZE == 0 and bounds.y % CELL_SIZE == 0, (
+                            f"seme {seed}: il pavimento dell'uscita non e' sulla griglia"
                         )
                         checked += 1
     assert checked > 40, f"expected plenty of room exits, found {checked}"
@@ -1695,3 +1721,81 @@ def test_a_widened_passage_has_almost_no_wall_inside_it():
     assert edges > 250, edges
     # A ceiling, not a zero: see the docstring. 154 before, 27 now.
     assert walled <= 35, f"{walled} bordi murati dentro un passaggio allargato su {edges}"
+
+
+def test_an_opening_painted_on_a_wall_leads_onto_floor():
+    """A gap painted through a wall has to open onto floor, not onto rock.
+
+    Seed 72's room 20, passage 30 and stairs 47 read as three pieces that do
+    not meet: the room opened east through a painted gap, the cell beyond it
+    was crosshatched rock, and the corridor started a cell further along
+    behind a wall of its own. The adapter drops a passage's end cell where an
+    `Exit` stands, because an Exit draws its own floor there - and that floor
+    came shaped as the archway this pass exists to remove.
+
+    Read off the render, because the cell may be drawn by the Exit's own
+    shape rather than by any map element - structurally it is invisible.
+    Crosshatch blackens about a quarter of a cell's middle; floor almost
+    nothing. Measured over 40 seeds: 59 of 361 openings led onto rock before,
+    14 after. What is left is a one-cell dead-end stub whose only cell is the
+    exit's own, swallowed whole so that no passage is ever connected to ask
+    for the floor."""
+    import numpy as np
+    import skia
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.graphics.conversions import grid_to_map
+
+    STEP = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}
+    SIDE = {"north": "N", "south": "S", "east": "E", "west": "W"}
+    openings = onto_rock = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                if not island["rooms"] or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                if not built.exits:
+                    continue
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                with bridge._region_inflation():
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                    bridge._square_off_doors(dg_map, built, island)
+                    bridge._square_off_room_exits(dg_map, built, island)
+                    bridge._quieten_stair_alcoves(dg_map, built)
+                    for element in dg_map._elements:
+                        for prop in list(getattr(element, "props", [])):
+                            element.remove_prop(prop)
+                    bounds = dg_map.bounds
+                    pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells,
+                                               dg_map.options.map_border_cells)
+                    w = max(1, round(bounds.width + 2 * pad_x))
+                    h = max(1, round(bounds.height + 2 * pad_y))
+                    surface = skia.Surface(w, h)
+                    dg_map.render(surface.getCanvas())
+                    image = surface.makeImageSnapshot().toarray()
+                grey = image[:, :, :3].mean(axis=2)
+                ox = pad_x - bounds.x + off_x * CELL_SIZE
+                oy = pad_y - bounds.y + off_y * CELL_SIZE
+                alcoves = {(s.x + off_x, s.y + off_y) for s in built.stairs.values()}
+                for spec in built.exits.values():
+                    side = SIDE.get(spec.direction)
+                    if side is None:
+                        continue
+                    cell = (spec.x - (1 if side == "E" else 0) + off_x,
+                            spec.y - (1 if side == "S" else 0) + off_y)
+                    step = STEP[side]
+                    beyond = (cell[0] + step[0], cell[1] + step[1])
+                    if not dg_map.is_occupied(*beyond) or beyond in alcoves:
+                        continue  # nothing is painted here
+                    cx = int(ox + (beyond[0] + 0.5) * CELL_SIZE)
+                    cy = int(oy + (beyond[1] + 0.5) * CELL_SIZE)
+                    if not (20 <= cx < w - 20 and 20 <= cy < h - 20):
+                        continue
+                    openings += 1
+                    dark = float((grey[cy - 20:cy + 20, cx - 20:cx + 20] < 200).mean())
+                    onto_rock += dark >= 0.06
+    assert openings > 300, openings
+    # A ceiling, not a zero: see the docstring. 59 before, 14 now.
+    assert onto_rock <= 20, f"{onto_rock} varchi su roccia su {openings}"
