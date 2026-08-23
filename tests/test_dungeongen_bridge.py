@@ -1566,3 +1566,132 @@ def test_a_door_the_bridge_draws_is_not_marked_again_by_the_overlay():
                         )
                     checked += 1
     assert checked > 15, f"expected plenty of doors drawn on room exits, found {checked}"
+
+
+def test_a_widened_passage_is_drawn_at_the_width_it_was_rolled():
+    """"Passage widens to 20 ft" has to reach dungeongen as 20ft of floor.
+
+    dungeongen ignores `Passage.width` outright - widths 1, 2 and 3 all draw
+    the same single-cell corridor - so the extra floor has to be handed over
+    as geometry. It is: a rung laid across the corridor at every cell of its
+    spine, each sharing that cell with the spine and so landing in the spine's
+    own region (see `_add_gallery_rungs`).
+
+    The cells a widened run claims are the ones the layout already reserved,
+    so nothing else can be standing on them: a claimed cell that dungeongen
+    is not told about is drawn as solid rock, and the passage reads 10ft wide
+    with the log saying 20 or 30. Measured over 40 seeds before the fix: 52 of
+    67 widened stretches short of their width, 113 of 286 claimed cells drawn
+    as rock. After: 67 of 67, none missing."""
+    runs = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                wide = [c for c in island["corridors"] if c["width"] > 1 and c["cells"]]
+                if not wide or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                drawn = _passage_cells(built) | {
+                    (x, y)
+                    for room in built.rooms.values()
+                    for x in range(room.x, room.x + room.width)
+                    for y in range(room.y, room.y + room.height)
+                }
+                for corridor in wide:
+                    runs += 1
+                    want = {tuple(cell) for cell in corridor["cells"]}
+                    missing = want - drawn
+                    assert not missing, (
+                        f"seed {seed}: passaggio {corridor['id']} largo "
+                        f"{corridor['width']} celle rivendica {sorted(want)}, "
+                        f"ma dungeongen non sa di {sorted(missing)}"
+                    )
+    assert runs > 50, runs
+
+
+def _cell_edge_ink(grey, ox, oy, w, h, a, b, cell_size):
+    """Fraction of the shared edge between two neighbouring cells that is
+    inked, read off the rendered pixels rather than off the geometry."""
+    import numpy as np
+
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    inset = cell_size * 0.25
+    if dx:
+        x = ox + (a[0] + (1 if dx > 0 else 0)) * cell_size
+        points = [(x, y) for y in np.arange(oy + a[1] * cell_size + inset,
+                                            oy + (a[1] + 1) * cell_size - inset)]
+    else:
+        y = oy + (a[1] + (1 if dy > 0 else 0)) * cell_size
+        points = [(x, y) for x in np.arange(ox + a[0] * cell_size + inset,
+                                            ox + (a[0] + 1) * cell_size - inset)]
+    inside = [(int(x), int(y)) for x, y in points
+              if 0 <= int(x) < w and 0 <= int(y) < h]
+    if not inside:
+        return None
+    return sum(1 for x, y in inside if grey[y, x] < 128) / len(inside)
+
+
+def test_a_widened_passage_has_almost_no_wall_inside_it():
+    """A 20ft passage is one 20ft space, not two corridors side by side.
+
+    Read off the render, not off the geometry: the wall is what is actually
+    drawn. Every pair of neighbouring cells inside a widened run is scanned
+    along the edge they share, and that edge should be clear.
+
+    Measured over 40 seeds: 154 of 282 shared edges carried a wall before the
+    widening was handed over at all (the flank was rock, so of course), 27
+    after. What is left is a rung whose anchor cell was dropped by the adapter
+    because a door or an exit stands on it - a door draws its own floor - and
+    the floor that rung was carrying ends up in a region of its own. 20 of the
+    27 are in runs whose spine is a single cell, where there is no second
+    spine cell to turn the rung onto. TODO.md section 8d has the details.
+    """
+    import numpy as np
+    import skia
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.graphics.conversions import grid_to_map
+
+    edges = walled = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                wide = [c for c in island["corridors"] if c["width"] > 1 and c["cells"]]
+                if not wide or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                with bridge._region_inflation():
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                    # Props draw over a cell boundary and a scan counts that
+                    # as wall - the same reason the alcove sweep strips them.
+                    for element in dg_map._elements:
+                        for prop in list(getattr(element, "props", [])):
+                            element.remove_prop(prop)
+                    bounds = dg_map.bounds
+                    pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells,
+                                               dg_map.options.map_border_cells)
+                    w = max(1, round(bounds.width + 2 * pad_x))
+                    h = max(1, round(bounds.height + 2 * pad_y))
+                    surface = skia.Surface(w, h)
+                    dg_map.render(surface.getCanvas())
+                    image = surface.makeImageSnapshot().toarray()
+                grey = image[:, :, :3].mean(axis=2)
+                shift_x = -built.bounds[0] if built.rooms else 0
+                shift_y = -built.bounds[1] if built.rooms else 0
+                ox = pad_x - bounds.x + shift_x * CELL_SIZE
+                oy = pad_y - bounds.y + shift_y * CELL_SIZE
+                for corridor in wide:
+                    footprint = {tuple(cell) for cell in corridor["cells"]}
+                    for a in sorted(footprint):
+                        for b in ((a[0] + 1, a[1]), (a[0], a[1] + 1)):
+                            if b not in footprint:
+                                continue
+                            ink = _cell_edge_ink(grey, ox, oy, w, h, a, b, CELL_SIZE)
+                            if ink is None:
+                                continue
+                            edges += 1
+                            walled += ink > 0.5
+    assert edges > 250, edges
+    # A ceiling, not a zero: see the docstring. 154 before, 27 now.
+    assert walled <= 35, f"{walled} bordi murati dentro un passaggio allargato su {edges}"

@@ -257,6 +257,14 @@ both 6.0px, both centred exactly on the grid line.
 - **Don't decide "already drawn" by comparing a first point to a link's
   points.** Compare *cells*. Comparing points threw away exactly the arms a
   crossing is made of.
+- **Don't hand a wide corridor over as a Room without wiring it up.** A room
+  joins a passage only when some passage names it by id - regions follow
+  `element.connections`, not adjacency - so a room dropped on a corridor is a
+  region of its own, walled across at both ends. Passages that *share a cell*
+  are connected by the adapter, which is why the widening is laid as rungs.
+- **The adapter drops a passage's end cell when a door or exit stands on it**
+  (those draw their own floor). Anything anchored on that cell loses its
+  anchor: give the passage one more cell so the anchor is interior.
 - **Don't measure a bend on the raw point list.** A width change appends a
   point halfway along an arm, and a passage's runs are separate corridor
   records: concatenate the runs of one node and merge collinear points first,

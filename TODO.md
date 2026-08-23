@@ -559,6 +559,43 @@ Sullo sweep dei 1785 isolotti i rifiuti per dimensione passano da 1 a 2.
 Rimpicciolire il dungeon per stare nel limite sarebbe barare sulla fedelta';
 semmai va alzato il limite o spezzata l'isola, ed e' un lavoro a se'.
 
+## 8d. Un muro dentro un passaggio allargato, dove il piolo perde l'ancoraggio
+
+Il pavimento in piu' di un passaggio allargato si consegna a dungeongen come
+un **piolo** per ogni cella di fianco: un passaggio corto che dalla cella di
+fianco attraversa la spina e svolta di una cella lungo la spina. Funziona
+perche' due passaggi che condividono una cella vengono connessi
+dall'adattatore, quindi il piolo finisce nella regione della spina.
+
+Non sempre. L'adattatore **toglie la cella di testa** di un passaggio quando
+li' c'e' una porta o un'uscita, perche' quelle disegnano il proprio pavimento.
+Se la cella d'ancoraggio del piolo e' una soglia, il piolo la perde: quello che
+resta e' un pezzo di pavimento in una regione tutta sua, che viene disegnato
+murato tutt'intorno. La svolta lungo la spina serve proprio a rendere interna
+la cella d'ancoraggio, ma un tratto largo **lungo una cella sola** non ha una
+seconda cella di spina su cui svoltare.
+
+Misurato su 40 semi, leggendo i pixel del render (`_cell_edge_ink` in
+`tests/test_dungeongen_bridge.py`): dei 282 bordi condivisi fra due celle
+dentro un tratto allargato, **154 avevano un muro sopra prima** (il fianco era
+roccia, quindi e' ovvio) e **27 dopo**. Dei 27: 21 fra spina e fianco, 4 fra
+due fianchi, 2 fra due celle di spina - questi ultimi sono una porta di
+traverso al corridoio, che e' giusta. **20 dei 27 sono in tratti con la spina
+di una cella sola.**
+
+Cosa provare, in ordine:
+
+- **la galleria come stanza.** Verificato in isolamento: stanza → passaggio →
+  galleria 2x4 → passaggio → stanza da' **una regione sola**, nessun muro ai due
+  capi, larghezza piena. Richiede pero' che i tratti stretti accanto la
+  **nominino** (le regioni seguono `element.connections`), quindi va cucito nel
+  giro dei corridoi, e va decomposta in rettangoli quando il tratto gira (12 su
+  76 non sono rettangolari). In piu' una stanza prende gli angoli arrotondati e
+  gli oggetti di scena di dungeongen, che su un corridoio sono sbagliati:
+  andrebbero tolti come si fa per l'alcova delle scale.
+- **nominare la stanza dal piolo** e' gia' fatto per il caso a una cella
+  (`room_at`), e vale 2 bordi su 282: non basta da solo.
+
 ## 9. Cose che le tabelle dicono e la mappa non sa dire
 
 Un inventario, tabella per tabella, di ogni risultato che produce qualcosa di

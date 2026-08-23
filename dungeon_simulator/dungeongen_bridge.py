@@ -433,6 +433,105 @@ def _ensure_perpendicular_approach(waypoints, bounds, at_start: bool):
     return _dedupe([*rest, stub, waypoints[-1]]) if rest else [stub, waypoints[-1]]
 
 
+def _add_gallery_rungs(dungeon, index: int, corridor: dict, spine: set,
+                       room_at: dict | None = None) -> None:
+    """Widen a corridor to the width the tables actually rolled, by laying a
+    rung across it from every cell of floor beside its spine.
+
+    dungeongen ignores `Passage.width` outright - measured, widths 1, 2 and 3
+    all draw the same single-cell corridor - so a passage the Passage Table
+    widened to 20 or 30ft was being drawn 10ft wide, with the log saying
+    otherwise. The floor has to come from somewhere else.
+
+    Not a Room over the whole footprint: regions follow `element.connections`,
+    an explicit graph, and a room joins a passage only when some passage names
+    it by id - so a room dropped on the corridor would be a region of its own,
+    walled off right across the passage at each end. Not parallel passages
+    either: two that merely run alongside never merge (measured - two regions,
+    a wall between). But the adapter *does* connect two passages that share a
+    cell, so a short one laid across the corridor through a cell of the spine
+    lands in the spine's own region, and the union is one region whose outline
+    is the full width with nothing drawn inside it.
+
+    Each rung is an L, not a straight crossing: from the flank cell to the
+    spine, then one more cell along the spine. The adapter drops a passage's
+    *end* cell when a door stands on it (a door draws its own floor), so a
+    rung that ended on the spine lost its anchor wherever the widened stretch
+    began at a door and was left as one orphaned cell of floor walled in on
+    all sides. Turning the corner makes that cell interior, where nothing
+    trims it.
+
+    The rungs are cut from `corridor["cells"]` - the footprint the layout
+    actually claimed, already clipped where something was in the way - so this
+    never opens floor the layout did not reserve, and a widened run that turns
+    a corner comes out right with no special case.
+    """
+    footprint = {tuple(cell) for cell in corridor.get("cells", ())}
+    if corridor.get("width", 1) <= 1 or not footprint:
+        return
+    on_spine = spine & footprint
+    if not on_spine:
+        return
+    for rung, flank in enumerate(sorted(footprint - spine)):
+        # Straight out to the spine, the short way, staying on our own floor.
+        reach = None
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            cell, steps = flank, 0
+            while cell in footprint and cell not in on_spine:
+                cell = (cell[0] + dx, cell[1] + dy)
+                steps += 1
+            if cell in on_spine and (reach is None or steps < reach[0]):
+                reach = (steps, cell, (dx, dy))
+        if reach is None:
+            continue
+        _, anchor, (dx, dy) = reach
+        waypoints = [flank, anchor]
+        end_room = f"wide{index}_{rung}b"
+        for ex, ey in ((dy, dx), (-dy, -dx)):  # along the spine, either way
+            along = (anchor[0] + ex, anchor[1] + ey)
+            if along in on_spine:
+                waypoints.append(along)
+                break
+        else:
+            # A run one cell long has no second spine cell to turn onto, and
+            # that one cell is very often the doorway of the room the run
+            # leaves from - so it is exactly the case where the anchor gets
+            # trimmed. Carry on into the room instead and name it: a passage
+            # that names a room is attached to it, and the flank ends up in
+            # the room's region, which is the doorway's region anyway.
+            for ex, ey in ((dy, dx), (-dy, -dx)):
+                beyond = (anchor[0] + ex, anchor[1] + ey)
+                room_id = (room_at or {}).get(beyond)
+                if room_id is not None:
+                    waypoints.append(beyond)
+                    end_room = room_id
+                    break
+        dungeon.add_passage(_DGPassage(
+            start_room=f"wide{index}_{rung}a", end_room=end_room,
+            waypoints=waypoints, width=1,
+        ))
+    # And the flanks stitched to each other along their own length. A rung
+    # whose anchor cell carries a door or an exit loses that cell - the
+    # adapter drops a passage's end cell there, because the door draws its own
+    # floor - and without this the cells that rung was carrying are left as
+    # separate boxes, each walled in on its own. Joined up, one surviving rung
+    # anywhere along a flank brings the whole flank with it.
+    for line, (ax, ay) in enumerate(((1, 0), (0, 1))):
+        for cell in sorted(footprint - spine):
+            if (cell[0] - ax, cell[1] - ay) in footprint - spine:
+                continue  # not the head of its line
+            far = cell
+            while (far[0] + ax, far[1] + ay) in footprint - spine:
+                far = (far[0] + ax, far[1] + ay)
+            if far == cell:
+                continue
+            dungeon.add_passage(_DGPassage(
+                start_room=f"flank{index}_{line}_{cell[0]}_{cell[1]}a",
+                end_room=f"flank{index}_{line}_{cell[0]}_{cell[1]}b",
+                waypoints=[cell, far], width=1,
+            ))
+
+
 def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
     """Translate one already-computed island (see layout.compute_layout) into
     a dungeongen Dungeon: rooms plus the direct room-to-room links between
@@ -655,6 +754,23 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         if len(pts) >= 2:
             route_cells |= _path_cells(_pad_single_cell(_grid_cell_path(pts)))
 
+    # The floor a widened run opens, collected before the loop because the
+    # corridor that gets swallowed by one can come earlier in the list than
+    # the run itself. Anything lying wholly inside it is already drawn as part
+    # of the gallery; handing it over again adds an element that nothing
+    # connects to, and an unconnected element is a region of its own with a
+    # wall right around it - which is how a stray one-cell corridor put a wall
+    # across the far end of a 20ft gallery.
+    gallery_cells: set[tuple] = set()
+    for corridor in island["corridors"]:
+        if corridor.get("width", 1) > 1:
+            gallery_cells |= {tuple(cell) for cell in corridor.get("cells", ())}
+    room_at = {
+        (x, y): dg_id
+        for dg_id, x0, y0, x1, y1 in room_bounds.values()
+        for x in range(x0, x1) for y in range(y0, y1)
+    }
+
     stair_corridor_ids = {f"stairs{stair['id']}" for stair in island.get("stairs", [])}
     for index, corridor in enumerate(island["corridors"]):
         points = _dedupe(corridor["points"])
@@ -669,6 +785,12 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
             continue
         cells = _path_cells(waypoints)
+        # Before the redundancy test below, and outside it: a widened run is
+        # never redundant. Its line down the middle can be drawn already, by a
+        # link or by another arm of the same junction, while the floor beside
+        # it is not - and skipping the whole corridor there left 6 of 67
+        # widened stretches at a single cell.
+        _add_gallery_rungs(dungeon, index, corridor, cells, room_at)
         claimed = _claim_takeoff_cell(
             waypoints, route_cells - cells, island.get("_takeoff", {}).get(corridor["id"]))
         # "Already drawn" is about the cells, but a corridor that claims its
@@ -678,6 +800,9 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         # crossing must not be - so a corridor that claims is always handed
         # over, and only one that claims nothing can be dropped as redundant.
         if claimed is waypoints and cells <= drawn_cells:
+            continue
+        if (claimed is waypoints and corridor.get("width", 1) <= 1
+                and cells <= gallery_cells):
             continue
         waypoints = claimed
         cells = _path_cells(waypoints)

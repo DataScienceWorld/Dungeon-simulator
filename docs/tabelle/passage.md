@@ -94,23 +94,38 @@ cella. La larghezza al momento dell'arrivo viaggia con l'uscita segreta
 sbagliato: un allargamento tirato *dopo* lo scontro resta nella voce anche se
 la camminata non ci è mai arrivata.
 
-**Ma un passaggio consegnato largo viene disegnato stretto.** Non c'è un
-errore: `add_passage` accetta, la conversione riesce, e il campo `width` del
-modello di layout **non viene mai letto** dall'adattatore. Misurato
+**Il campo `width` non serve a niente, quindi la larghezza è geometria.**
+Non c'è un errore: `add_passage` accetta, la conversione riesce, e il campo
+`width` del modello di layout **non viene mai letto** dall'adattatore. Misurato
 consegnando lo stesso corridoio con `width` 1, 2 e 3: viene fuori sempre di
 8x1 celle. (Un `ValueError` *esiste* - `Passage.__init__` rifiuta punti che
 formino un rettangolo più largo di una cella, *"Passage must be exactly one
 cell wide"* - ma l'adattatore costruisce sempre punti da una cella, quindi non
-scatta mai.) Oggi la larghezza si vede quindi **solo nel renderer di ripiego
-RoughJS**, che la disegna davvero, e mai nell'arte di dungeongen, che è quella
-che si usa sempre.
+scatta mai.)
 
-La strada c'è ed è verificata: consegnare il tratto largo come una **stanza**.
-Provato con stanza → passaggio → galleria 4x3 → passaggio → stanza: viene fuori
-**una regione sola**, quindi nessun muro fra la galleria e i corridoi ai due
-capi. Consegnare invece due corsie parallele da una cella **non** funziona:
-misurate, restano due regioni distinte, quindi con un muro in mezzo. Vedi
-[`TODO.md`](../../TODO.md) sezione 9.
+Il pavimento in più si consegna quindi a parte: **un piolo per ogni cella di
+fianco**, cioè un passaggio corto che dalla cella di fianco attraversa la
+spina e poi svolta di una cella lungo la spina (`_add_gallery_rungs`). Due
+passaggi che **condividono una cella** vengono connessi dall'adattatore, quindi
+il piolo finisce nella regione della spina, e l'unione è una regione sola larga
+quanto deve, senza niente disegnato dentro. Non una **stanza** sopra l'impronta:
+le regioni seguono `element.connections`, un grafo esplicito, e una stanza si
+unisce a un passaggio solo se qualche passaggio la nomina - quindi sarebbe una
+regione a sé, murata di traverso ai due capi. Non due **corsie parallele**:
+misurate, restano due regioni distinte con un muro in mezzo.
+
+Il piolo svolta invece di attraversare e basta perché l'adattatore **butta via
+la cella di testa** di un passaggio quando lì c'è una porta o un'uscita (le
+disegnano da sé il proprio pavimento): un piolo che finiva sulla spina perdeva
+l'ancoraggio ogni volta che il tratto largo cominciava su una soglia, e restava
+una cella di pavimento murata da sola. Girando l'angolo quella cella diventa
+interna, e lì non viene tolta.
+
+Misurato su 40 semi: le celle rivendicate da un tratto allargato e **non**
+disegnate passano da 113 su 286 a **0**, e i tratti disegnati alla larghezza
+piena da 15 su 67 a **67**. I muri dentro un passaggio allargato, letti sui
+pixel, da 154 bordi su 282 a **27**; quello che resta è in
+[`TODO.md`](../../TODO.md) sezione 8d.
 
 **Il passaggio si ferma contro le stanze già disegnate.** Chi disegna prima ha
 la precedenza. Se un passaggio raggiunge una stanza già piazzata, si ferma al
