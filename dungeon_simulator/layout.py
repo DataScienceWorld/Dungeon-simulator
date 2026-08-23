@@ -1076,19 +1076,14 @@ class _Layout:
                 # at 10ft already (see generator.py) - DEFAULT_PASSAGE_WIDTH_FT
                 # here is just a last-resort floor for values from elsewhere.
                 new_width = _cells(max(event["width_ft"], DEFAULT_PASSAGE_WIDTH_FT))
-                if not moved and len(runs[-1]["points"]) == 1:
-                    # Nothing walked yet, so this is not a change partway along
-                    # the passage - it is what the passage *is*. Widening the
-                    # run in place rather than closing it and opening another
-                    # keeps the whole thing at its rolled width; the minimum
-                    # 10ft used to be taken first, at the old one, so seed 72's
-                    # passage 16 rolled "widens to 20 ft" and came out 10ft
-                    # wide for its first cell and 20 for the rest.
-                    width = new_width
-                    side = event.get("side")
-                    runs[-1]["width"] = width
-                    runs[-1]["side"] = side
-                    continue
+                # The widening starts *after* the mouth, always - including
+                # when the resize is the passage's very first roll and nothing
+                # has been walked yet. A passage is a way out of somewhere,
+                # and the way out is one cell: an arm of a T leaves through
+                # the side wall of a single 10ft cell of the trunk, so it
+                # cannot be born 20ft wide there. `ensure_min_length` walks
+                # that first cell at the width the passage still has, and the
+                # new run beyond it is the wide part.
                 if not ensure_min_length():
                     break
                 width = new_width

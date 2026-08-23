@@ -1580,9 +1580,9 @@ def test_a_widened_passage_is_drawn_at_the_width_it_was_rolled():
     The cells a widened run claims are the ones the layout already reserved,
     so nothing else can be standing on them: a claimed cell that dungeongen
     is not told about is drawn as solid rock, and the passage reads 10ft wide
-    with the log saying 20 or 30. Measured over 40 seeds before the fix: 52 of
-    67 widened stretches short of their width, 113 of 286 claimed cells drawn
-    as rock. After: 67 of 67, none missing."""
+    with the log saying 20 or 30. Measured over 40 seeds before the fix: 72 of
+    85 widened stretches short of their width, 164 of 361 claimed cells drawn
+    as rock. After: 85 of 85, none missing."""
     runs = 0
     for seed in range(40):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
@@ -1607,7 +1607,7 @@ def test_a_widened_passage_is_drawn_at_the_width_it_was_rolled():
                         f"{corridor['width']} celle rivendica {sorted(want)}, "
                         f"ma dungeongen non sa di {sorted(missing)}"
                     )
-    assert runs > 50, runs
+    assert runs > 70, runs
 
 
 def _cell_edge_ink(grey, ox, oy, w, h, a, b, cell_size):

@@ -45,16 +45,24 @@ lunghezza propria al passaggio: sulla mappa percorre comunque il minimo di
 10ft ...`). È la stessa regola dei 5 ft che diventano una cella, applicata
 alla lunghezza.
 
-**Ma non a un ridimensionamento che apre il passaggio.** Se il primo tiro è un
-15 o un 16, quello non è un cambio a metà strada: è *quello che il passaggio
-è*, e vale dalla prima cella. Prima il minimo veniva preso lì, alla larghezza
-vecchia, e il passaggio 16 del seed 72 - che tira l'allargamento a 20ft e poi
-"goes 15 ft and ends at a door" - veniva fuori largo 10ft per la prima cella e
-20 per le altre due: tre celle di corridoio per un tiro che ne chiedeva due.
-Su 40 seed, dei 101 passaggi che iniziano con un ridimensionamento **99 sono
-ora un tratto solo** alla larghezza tirata; i due che non lo sono hanno un
-secondo ridimensionamento più avanti. Prima: 5 tratti soli, e 43 con una cella
-stretta appiccicata davanti.
+**E vale anche per un ridimensionamento che apre il passaggio.** Se il primo
+tiro è un 15 o un 16, la **bocca resta di una cella** e l'allargamento comincia
+dopo. Un passaggio è una via d'uscita da qualcosa, e la via d'uscita è larga
+una cella: il braccio di una T esce dalla parete laterale di **una** cella da
+10ft del tronco, quindi lì non può nascere già largo 20. Il minimo di
+`ensure_min_length` cammina quella prima cella alla larghezza che il passaggio
+ha ancora, e il tratto nuovo oltre è la parte larga.
+
+Su 40 seed, dei 97 passaggi che iniziano con un ridimensionamento 48 non
+allargavano affatto (il d6 dava 10ft); dei restanti 49, **48 hanno la bocca da
+10ft e poi la larghezza tirata** - 45 con entrambi i pezzi camminati e 3 in cui
+oltre la bocca non c'era spazio. Il singolo caso restante è un passaggio che
+**eredita** la larghezza dal tronco (`carries_on`): lì non c'è nessuna bocca da
+aprire, è lo stesso corridoio che prosegue, e parte giusto alla larghezza che
+aveva già.
+
+L'esempio è il passaggio 16 del seed 72, il braccio destro di una T: una cella
+da 10ft attaccata alla terza cella del tronco, poi 2x2 celle a 20ft.
 
 **La larghezza resta.** Un tiro 15 o 16 non riguarda il tratto fino al bivio
 successivo: riguarda **il passaggio**. La larghezza viene portata avanti in
@@ -121,10 +129,16 @@ l'ancoraggio ogni volta che il tratto largo cominciava su una soglia, e restava
 una cella di pavimento murata da sola. Girando l'angolo quella cella diventa
 interna, e lì non viene tolta.
 
+Un tratto largo la cui spina è **una cella sola** non consegna più anche il
+proprio passaggio-spina: `_pad_single_cell` lo trasformava in un passaggio da
+una cella, cioè una regione a sé, e una regione si disegna come contorno - una
+scatoletta di muro dentro la galleria.
+
 Misurato su 40 semi: le celle rivendicate da un tratto allargato e **non**
-disegnate passano da 113 su 286 a **0**, e i tratti disegnati alla larghezza
-piena da 15 su 67 a **67**. I muri dentro un passaggio allargato, letti sui
-pixel, da 154 bordi su 282 a **27**; quello che resta è in
+disegnate passano da 164 su 361 a **0**, e i tratti disegnati alla larghezza
+piena da 13 su 85 a **85**. I muri dentro un passaggio allargato, letti sui
+pixel, da 197 bordi su 360 a **15** - e 2 di quei 15 sono una porta di traverso
+al corridoio, che ci va. Il resto è in
 [`TODO.md`](../../TODO.md) sezione 8d.
 
 **Il passaggio si ferma contro le stanze già disegnate.** Chi disegna prima ha

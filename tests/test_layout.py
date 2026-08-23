@@ -709,46 +709,60 @@ def test_a_widened_passage_that_runs_out_of_room_stops_and_says_so():
     assert opened > 20, f"expected plenty of secret entrances, found {opened}"
 
 
-def test_a_passage_that_opens_by_widening_is_wide_from_its_first_cell():
-    """"Passage widens to 20 ft" as a passage's *first* roll says what that
-    passage is, not what it becomes partway along it.
+def test_a_passage_that_opens_by_widening_still_has_a_ten_foot_mouth():
+    """"Passage widens to 20 ft" as a passage's *first* roll widens it after
+    the mouth, not at it.
 
-    The minimum-length rule used to be applied at the resize too: the passage
-    walked its 10ft at the old width and only then widened, so seed 72's
-    passage 16 - which rolls the widening and then "goes 15 ft and ends at a
-    door" - came out 10ft wide for its first cell and 20 for the other two.
-    Three cells of corridor for a roll that asked for two.
+    A passage is a way out of somewhere, and the way out is one cell wide: an
+    arm of a T leaves through the side wall of a single 10ft cell of the
+    trunk, so it cannot be born 20ft wide there. The minimum-length rule walks
+    that first cell at the width the passage still has, and the run beyond it
+    is the wide part - seed 72's passage 16, the right arm of a T, is one 10ft
+    cell against the trunk's last cell and then 2x2 cells at 20ft.
 
-    Over 40 seeds, of the 101 passages whose first roll is a resize, 99 now
-    come out as a single run at the rolled width; the two that do not have a
-    second resize of their own further along. Before: 5 single runs, and 43
-    with a narrow cell stuck on the front."""
-    single = 0
+    Measured over 40 seeds: of the 97 passages whose first roll is a resize,
+    48 were not widened at all by it (the d6 rolled 10ft). Of the other 49,
+    48 come out as a one-cell mouth followed by the rolled width - 45 with
+    both parts walked, 3 where there was no room past the mouth. The one
+    exception *inherits* its width from the trunk it carries on from: there is
+    no mouth to open, it is the same corridor going the same way, and it
+    starts at the width it already had."""
+    mouths = inherited = 0
     for seed in range(40):
         dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
-        starts_wide = {}
+        opens_wide = {}
         for node in dungeon.all_nodes():
             events = node.geo.get("events") or []
             if node.kind != "passage" or not events or events[0]["type"] != "resize":
                 continue
-            resizes = [e for e in events if e["type"] == "resize"]
-            if len(resizes) > 1:
-                continue  # it changes again later, so more than one run is right
-            starts_wide[node.id] = max(1, round(events[0]["width_ft"] / 10.0))
+            want = max(1, round(events[0]["width_ft"] / 10.0))
+            if want > 1:
+                opens_wide[node.id] = (want, node.geo.get("width_ft"))
         for islands in compute_layout(dungeon).values():
             for island in islands:
                 runs = {}
                 for corridor in island["corridors"]:
-                    if corridor["id"] in starts_wide:
+                    if corridor["id"] in opens_wide:
                         runs.setdefault(corridor["id"], []).append(corridor["width"])
                 for node_id, widths in runs.items():
-                    want = starts_wide[node_id]
-                    assert widths == [want], (
-                        f"seed {seed} passage #{node_id}: rolled {want} cells wide from "
-                        f"its first roll and came out as runs {widths}"
+                    want, carried = opens_wide[node_id]
+                    if carried:
+                        # Not a mouth at all - the same corridor carrying on.
+                        inherited += 1
+                        continue
+                    assert widths[0] == 1, (
+                        f"seme {seed} passaggio #{node_id}: si apre allargandosi a "
+                        f"{want} celle e la bocca esce larga {widths[0]}, non 1"
                     )
-                    single += 1
-    assert single > 40, f"expected plenty of passages that open by widening, found {single}"
+                    # Only the run right after the mouth: a passage may roll
+                    # a second resize further along, and that is its own run.
+                    assert widths[1:2] in ([], [want]), (
+                        f"seme {seed} passaggio #{node_id}: dopo la bocca voleva "
+                        f"{want} celle e ha i tratti {widths}"
+                    )
+                    mouths += 1
+    assert mouths > 30, mouths
+    assert inherited <= mouths // 10, (inherited, mouths)
 
 
 def test_a_flight_of_stairs_has_both_its_ends_on_a_map():
@@ -942,9 +956,12 @@ def test_a_t_junction_walks_the_length_it_rolled_before_branching():
         for node in _all_nodes(dungeon):
             if not any("T-junction" in line for line in node.lines):
                 continue
-            if any("turn" == event.get("type")
+            if any(event.get("type") in ("turn", "resize")
                    for event in node.geo.get("events", [])):
-                continue  # a bend of its own splits the leg; see the turn tests
+                # A bend splits the leg (see the turn tests) and a width
+                # change takes a minimum of its own before opening the new
+                # run - both add cells the "continues" rolls do not name.
+                continue
             rolled = sum(int(m.group(1))
                          for line in node.lines
                          for m in re.finditer(r"continues (\d+) ft", line))

@@ -434,7 +434,8 @@ def _ensure_perpendicular_approach(waypoints, bounds, at_start: bool):
 
 
 def _add_gallery_rungs(dungeon, index: int, corridor: dict, spine: set,
-                       room_at: dict | None = None) -> None:
+                       room_at: dict | None = None,
+                       route_cells: set | None = None) -> set:
     """Widen a corridor to the width the tables actually rolled, by laying a
     rung across it from every cell of floor beside its spine.
 
@@ -468,10 +469,11 @@ def _add_gallery_rungs(dungeon, index: int, corridor: dict, spine: set,
     """
     footprint = {tuple(cell) for cell in corridor.get("cells", ())}
     if corridor.get("width", 1) <= 1 or not footprint:
-        return
+        return set()
     on_spine = spine & footprint
     if not on_spine:
-        return
+        return set()
+    laid: set = set()
     for rung, flank in enumerate(sorted(footprint - spine)):
         # Straight out to the spine, the short way, staying on our own floor.
         reach = None
@@ -493,23 +495,30 @@ def _add_gallery_rungs(dungeon, index: int, corridor: dict, spine: set,
                 waypoints.append(along)
                 break
         else:
-            # A run one cell long has no second spine cell to turn onto, and
-            # that one cell is very often the doorway of the room the run
-            # leaves from - so it is exactly the case where the anchor gets
-            # trimmed. Carry on into the room instead and name it: a passage
-            # that names a room is attached to it, and the flank ends up in
-            # the room's region, which is the doorway's region anyway.
+            # A run one cell long has no second spine cell to turn onto - and
+            # a widened stretch begins right after the passage's own 10ft
+            # mouth, so this is the common shape, not a corner case. Carry on
+            # into whatever floor is already there beyond the anchor: another
+            # stretch of this same passage, which is a passage element too, so
+            # sharing that cell connects the rung to it. Failing that, into
+            # the room next door, named - a passage that names a room is
+            # attached to it, and the flank lands in the room's region, which
+            # is the anchor's region anyway.
             for ex, ey in ((dy, dx), (-dy, -dx)):
                 beyond = (anchor[0] + ex, anchor[1] + ey)
+                if beyond in (route_cells or ()) and beyond not in footprint:
+                    waypoints.append(beyond)
+                    break
                 room_id = (room_at or {}).get(beyond)
                 if room_id is not None:
                     waypoints.append(beyond)
                     end_room = room_id
                     break
-        dungeon.add_passage(_DGPassage(
+        if dungeon.add_passage(_DGPassage(
             start_room=f"wide{index}_{rung}a", end_room=end_room,
             waypoints=waypoints, width=1,
-        ))
+        )):
+            laid |= _path_cells(waypoints)
     # And the flanks stitched to each other along their own length. A rung
     # whose anchor cell carries a door or an exit loses that cell - the
     # adapter drops a passage's end cell there, because the door draws its own
@@ -525,11 +534,13 @@ def _add_gallery_rungs(dungeon, index: int, corridor: dict, spine: set,
                 far = (far[0] + ax, far[1] + ay)
             if far == cell:
                 continue
-            dungeon.add_passage(_DGPassage(
+            if dungeon.add_passage(_DGPassage(
                 start_room=f"flank{index}_{line}_{cell[0]}_{cell[1]}a",
                 end_room=f"flank{index}_{line}_{cell[0]}_{cell[1]}b",
                 waypoints=[cell, far], width=1,
-            ))
+            )):
+                laid |= _path_cells([cell, far])
+    return laid
 
 
 def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
@@ -790,7 +801,16 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         # link or by another arm of the same junction, while the floor beside
         # it is not - and skipping the whole corridor there left 6 of 67
         # widened stretches at a single cell.
-        _add_gallery_rungs(dungeon, index, corridor, cells, room_at)
+        laid = _add_gallery_rungs(dungeon, index, corridor, cells, room_at, route_cells)
+        if len(cells) == 1 and cells <= laid:
+            # The spine of this widened run is a single cell, and the rungs
+            # already cover it. Handing it over as a passage of its own adds
+            # an element connected to nothing - `_pad_single_cell` turns it
+            # into a one-cell passage, which is a region of its own, and a
+            # region is drawn as an outline: a little box of wall inside the
+            # gallery. 34 of the 46 remaining walls inside a widened passage
+            # were this.
+            continue
         claimed = _claim_takeoff_cell(
             waypoints, route_cells - cells, island.get("_takeoff", {}).get(corridor["id"]))
         # "Already drawn" is about the cells, but a corridor that claims its
