@@ -262,6 +262,13 @@ both 6.0px, both centred exactly on the grid line.
   `element.connections`, not adjacency - so a room dropped on a corridor is a
   region of its own, walled across at both ends. Passages that *share a cell*
   are connected by the adapter, which is why the widening is laid as rungs.
+- **Two passages are joined only where they stand on the same cell.** Meeting
+  at a lattice point is not a connection - consecutive stretches of one
+  passage, split by a width change, were two regions with a wall between. Make
+  them overlap by a cell.
+- **A one-cell passage padded to `[c, c]` is a region of its own**, so it draws
+  as a little box of wall. Give it a second cell, or don't hand it over when
+  something else already covers it.
 - **The adapter drops a passage's end cell when a door or exit stands on it**
   (those draw their own floor). Anything anchored on that cell loses its
   anchor: give the passage one more cell so the anchor is interior.

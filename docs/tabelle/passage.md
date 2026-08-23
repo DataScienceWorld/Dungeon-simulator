@@ -129,6 +129,16 @@ l'ancoraggio ogni volta che il tratto largo cominciava su una soglia, e restava
 una cella di pavimento murata da sola. Girando l'angolo quella cella diventa
 interna, e lì non viene tolta.
 
+**Un cambio di larghezza non taglia il corridoio.** Chiude un tratto e ne apre
+un altro, e i due arrivano a dungeongen come passaggi distinti che si toccano
+su un punto del reticolo **senza condividere nessuna cella** - e quella non è
+una connessione: l'adattatore unisce due passaggi solo dove stanno sulla stessa
+cella. Erano due regioni, e fra due regioni ci va un muro: il passaggio 93 del
+seed 72 veniva fuori tagliato in due, la sua bocca da 10ft murata dalla propria
+galleria da 20ft. Ora ogni tratto **arriva una cella dentro il successivo**,
+così la condividono. Misurato su 40 semi: dei 112 cambi di larghezza, 67 erano
+tagliati da un muro, **8** lo sono ancora.
+
 Un tratto largo la cui spina è **una cella sola** non consegna più anche il
 proprio passaggio-spina: `_pad_single_cell` lo trasformava in un passaggio da
 una cella, cioè una regione a sé, e una regione si disegna come contorno - una

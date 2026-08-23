@@ -783,6 +783,37 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
     }
 
     stair_corridor_ids = {f"stairs{stair['id']}" for stair in island.get("stairs", [])}
+    # The cells the previous stretch of each passage was handed over with, so
+    # the next one can be stitched to it. A width change closes one run and
+    # opens another, and the two meet at a lattice point without sharing a
+    # cell - which is not a connection: the adapter joins two passages only
+    # where they stand on the same cell, so each was a region of its own and
+    # a wall was drawn straight across the corridor. Seed 72's passage 93 came
+    # out cut in two, its 10ft mouth walled off from its own 20ft gallery.
+    run_tail: dict = {}
+    # And, looking the other way, the cell each stretch should reach one step
+    # into the next one. A stretch of a single cell is the case that needs it:
+    # padded out to a passage from a cell to itself it is a region of its own
+    # and gets drawn as a little box, and the stitch alone does not undo that.
+    # Overlapping by one cell makes the two stretches share it, which is what
+    # the adapter actually joins on.
+    reach_on: dict = {}
+    _by_node: dict = {}
+    for _index, _corridor in enumerate(island["corridors"]):
+        if isinstance(_corridor["id"], str):
+            continue
+        _points = _dedupe([tuple(p) for p in _corridor["points"]])
+        if len(_points) < 2:
+            continue
+        _by_node.setdefault(_corridor["id"], []).append(
+            (_index, _pad_single_cell(_grid_cell_path(_points))))
+    for _steps in _by_node.values():
+        for (_ia, _wa), (_ib, _wb) in zip(_steps, _steps[1:]):
+            _last = _wa[-1]
+            _step = next((c for c in _path_cells(_wb)
+                          if abs(c[0] - _last[0]) + abs(c[1] - _last[1]) == 1), None)
+            if _step is not None:
+                reach_on[_ia] = _step
     for index, corridor in enumerate(island["corridors"]):
         points = _dedupe(corridor["points"])
         if len(points) < 2:
@@ -793,6 +824,9 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
             # touched and lost them.
             continue
         waypoints = _pad_single_cell(_grid_cell_path(points))
+        step_on = reach_on.get(index)
+        if step_on is not None:
+            waypoints = _dedupe([*waypoints, step_on])
         if len(waypoints) < 2 or not _is_axis_aligned_path(waypoints):
             continue
         cells = _path_cells(waypoints)
@@ -802,6 +836,20 @@ def build_dungeongen_dungeon(island: dict) -> "_DGDungeon":
         # it is not - and skipping the whole corridor there left 6 of 67
         # widened stretches at a single cell.
         laid = _add_gallery_rungs(dungeon, index, corridor, cells, room_at, route_cells)
+        covered = cells | laid
+        previous = run_tail.get(corridor["id"])
+        run_tail[corridor["id"]] = covered
+        if previous:
+            seam = next((
+                (a, b)
+                for a in sorted(previous) for b in sorted(covered)
+                if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
+            ), None)
+            if seam is not None:
+                dungeon.add_passage(_DGPassage(
+                    start_room=f"seam{index}a", end_room=f"seam{index}b",
+                    waypoints=[seam[0], seam[1]], width=1,
+                ))
         if len(cells) == 1 and cells <= laid:
             # The spine of this widened run is a single cell, and the rungs
             # already cover it. Handing it over as a passage of its own adds

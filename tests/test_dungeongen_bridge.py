@@ -1799,3 +1799,85 @@ def test_an_opening_painted_on_a_wall_leads_onto_floor():
     assert openings > 300, openings
     # A ceiling, not a zero: see the docstring. 59 before, 14 now.
     assert onto_rock <= 20, f"{onto_rock} varchi su roccia su {openings}"
+
+
+def test_a_passage_that_changes_width_is_not_cut_in_two():
+    """A width change must not draw a wall across the corridor.
+
+    A resize closes one stretch of a passage and opens another, and the two
+    are handed to dungeongen as separate passages that meet at a lattice
+    point without sharing a cell - which is not a connection: the adapter
+    joins two passages only where they stand on the same cell. Each was a
+    region of its own, and between two regions a wall is drawn. Seed 72's
+    passage 93 came out cut in two, its 10ft mouth walled off from its own
+    20ft gallery, with passage 71 above it.
+
+    Each stretch now reaches one cell into the next, so they share it. That
+    also removes a one-cell stretch's other problem: padded out to a passage
+    from a cell to itself it is a region of its own and draws as a little box.
+
+    Measured over 40 seeds: of 112 width changes, 67 had a wall across them
+    before, 8 after."""
+    import collections
+
+    import numpy as np
+    import skia
+    from dungeongen.constants import CELL_SIZE
+    from dungeongen.graphics.conversions import grid_to_map
+
+    seams = walled = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                runs = collections.defaultdict(list)
+                for corridor in island["corridors"]:
+                    if not isinstance(corridor["id"], str):
+                        runs[corridor["id"]].append(corridor)
+                joints = []
+                for stretches in runs.values():
+                    for before, after in zip(stretches, stretches[1:]):
+                        cells = []
+                        for stretch in (before, after):
+                            points = bridge._dedupe(
+                                [tuple(p) for p in stretch["points"]])
+                            cells.append(bridge._path_cells(
+                                bridge._pad_single_cell(
+                                    bridge._grid_cell_path(points)))
+                                if len(points) >= 2 else set())
+                        joints.extend(
+                            (a, b) for a in sorted(cells[0]) for b in sorted(cells[1])
+                            if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1)
+                if not joints or not bridge.fits_size_limit(island):
+                    continue
+                built = bridge.build_dungeongen_dungeon(island)
+                off_x = -built.bounds[0] if built.rooms else 0
+                off_y = -built.bounds[1] if built.rooms else 0
+                with bridge._region_inflation():
+                    dg_map = bridge._convert_dungeon(built, show_numbers=False)
+                    bridge._square_off_doors(dg_map, built, island)
+                    bridge._square_off_room_exits(dg_map, built, island)
+                    bridge._quieten_stair_alcoves(dg_map, built)
+                    for element in dg_map._elements:
+                        for prop in list(getattr(element, "props", [])):
+                            element.remove_prop(prop)
+                    bounds = dg_map.bounds
+                    pad_x, pad_y = grid_to_map(dg_map.options.map_border_cells,
+                                               dg_map.options.map_border_cells)
+                    w = max(1, round(bounds.width + 2 * pad_x))
+                    h = max(1, round(bounds.height + 2 * pad_y))
+                    surface = skia.Surface(w, h)
+                    dg_map.render(surface.getCanvas())
+                    image = surface.makeImageSnapshot().toarray()
+                grey = image[:, :, :3].mean(axis=2)
+                ox = pad_x - bounds.x + off_x * CELL_SIZE
+                oy = pad_y - bounds.y + off_y * CELL_SIZE
+                for a, b in joints:
+                    ink = _cell_edge_ink(grey, ox, oy, w, h, a, b, CELL_SIZE)
+                    if ink is None:
+                        continue
+                    seams += 1
+                    walled += ink > 0.5
+    assert seams > 80, seams
+    # A ceiling, not a zero: see the docstring. 67 before, 8 now.
+    assert walled <= 15, f"{walled} cambi di larghezza tagliati da un muro su {seams}"
