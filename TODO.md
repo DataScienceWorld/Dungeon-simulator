@@ -570,9 +570,10 @@ quindi il piolo finisce nella regione della spina.
 Misurato su 40 semi leggendo i pixel del render (`_cell_edge_ink` in
 `tests/test_dungeongen_bridge.py`), sui 360 bordi condivisi fra due celle
 dentro un tratto allargato: **197 avevano un muro sopra senza i pioli** (il
-fianco era roccia, quindi e' ovvio) e **15 con**. Dei 15: 8 fra spina e
-fianco, 5 fra due fianchi, 2 fra due celle di spina - questi ultimi sono una
-porta di traverso al corridoio, che ci va.
+fianco era roccia, quindi e' ovvio) e **8 con** - su 382 bordi, da quando i
+rami hanno smesso di camminare dentro i fianchi del tronco. Degli 8: 3 fra
+spina e fianco, 3 fra due fianchi, 2 fra due celle di spina - questi ultimi
+sono una porta di traverso al corridoio, che ci va.
 
 Il grosso e' gia' venuto via, in due passi che vale la pena aver capito:
 
@@ -587,7 +588,8 @@ Il grosso e' gia' venuto via, in due passi che vale la pena aver capito:
   proprio passaggio-spina, che `_pad_single_cell` trasforma in un passaggio
   da una cella: una regione a se', e una regione si disegna come contorno,
   cioe' una scatoletta di muro dentro la galleria. Saltandolo quando i pioli
-  coprono gia' quella cella, i muri sono passati da 46 a 15.
+  coprono gia' quella cella, i muri sono passati da 46 a 15, e poi a 8
+  quando i rami hanno smesso di essere disegnati dentro i fianchi.
 
 Cosa resta da provare per gli ultimi 13 (i 2 con la porta stanno bene):
 

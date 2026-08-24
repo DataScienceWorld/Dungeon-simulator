@@ -214,6 +214,19 @@ def _widened_cells(cells, heading, width_cells, side):
     }
 
 
+def _flank_extents(width_cells, side):
+    """How many cells a run of this width reaches to its left and to its
+    right, past the line down its middle. The same split `_widened_cells`
+    makes, named so a branch can ask where the corridor's edge is."""
+    extra = width_cells - 1
+    if extra <= 0:
+        return 0, 0
+    half = extra // 2
+    if extra % 2 == 0:
+        return half, half
+    return (half + 1, half) if side == "left" else (half, half + 1)
+
+
 def _clip_at_placed_room(x, y, nx, ny, occupied):
     """Stop a move at the wall of the first already-placed room it runs into.
 
@@ -1107,6 +1120,7 @@ class _Layout:
                 child.geo["approach_heading"] = child_heading
                 bx, by = x, y
                 corner = None
+                edge = None
                 if turn is not None:
                     # A branch leaves through the *side wall of the cell the
                     # passage is standing in*, not from the lattice point its
@@ -1122,6 +1136,29 @@ class _Layout:
                     bdx, bdy = _VECTORS[child_heading]
                     bx += (1 if bdx > 0 else 0) - (1 if tdx > 0 else 0)
                     by += (1 if bdy > 0 else 0) - (1 if tdy > 0 else 0)
+                    # Out to the corridor's own edge first, when the corridor
+                    # is wider than one cell. A branch leaves through the side
+                    # wall of the trunk, and on a 20 or 30ft trunk that wall
+                    # is not beside the middle line - it is one or two cells
+                    # further out. Left from the middle, a branch off seed
+                    # 72's passage 93 walked its whole 10ft *inside* the
+                    # trunk's own flank and vanished: the T had one arm.
+                    #
+                    # Counted on the cells the run actually claimed, not on
+                    # the width it was rolled at: where something already
+                    # drawn cut the flank short, the edge is where the floor
+                    # ends.
+                    reach = _flank_extents(width, side)[0 if turn == "left" else 1]
+                    edge = (int(x - (1 if tdx > 0 else 0)),
+                            int(y - (1 if tdy > 0 else 0)))
+                    claimed_here = runs[-1]["cells"]
+                    for _ in range(reach):
+                        beside = (int(edge[0] + bdx), int(edge[1] + bdy))
+                        if beside not in claimed_here:
+                            break
+                        edge = beside
+                        bx += bdx
+                        by += bdy
                     if bx != x and by != y:
                         # Both corrections fired at once, so the takeoff is
                         # diagonally off the trunk's last point. The route that
@@ -1135,7 +1172,8 @@ class _Layout:
                 # point's own cell.
                 tdx, tdy = _VECTORS[heading]
                 island["_takeoff"][child.id] = (
-                    int(x - (1 if tdx > 0 else 0)), int(y - (1 if tdy > 0 else 0))
+                    edge if turn is not None else
+                    (int(x - (1 if tdx > 0 else 0)), int(y - (1 if tdy > 0 else 0)))
                 )
                 child_path = path.branch((bx, by), corner) if turn is not None else path
                 self._enter(child, bx, by, child_heading, level, island,

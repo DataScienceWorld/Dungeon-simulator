@@ -161,6 +161,19 @@ dice), ma resta nel registro. Se invece il passaggio *parte già dentro* la
 stanza, non c'è muro contro cui fermarsi: non viene tracciato affatto, con la
 sua riga.
 
+**Un ramo esce dal bordo del corridoio, non dalla sua mezzeria.** Un ramo
+lascia il tronco dalla parete laterale della cella in cui il tronco si trova, e
+su un tronco da 20 o 30ft quella parete non è di fianco alla linea di mezzo: è
+una o due celle più in là. Partendo dalla mezzeria il ramo percorreva i suoi
+primi 10ft **dentro il fianco del tronco** e spariva - la T in fondo al
+passaggio 93 del seed 72 aveva un braccio solo, perché l'altro era disegnato su
+pavimento che la galleria aveva già. Quanto in là si conta sulle celle che il
+tratto ha **davvero** rivendicato, non sulla larghezza tirata: dove qualcosa di
+già disegnato ha accorciato il fianco, il bordo è dove finisce il pavimento
+(`_flank_extents`). Su 40 semi, dei rami da un tronco largo che disegnano
+qualcosa: prima 35 su 105 non posavano nessuna cella propria, ora **5 su 102** -
+e quei 5 sono alcove di scale, che le percorrono le scale e non questo codice.
+
 **I rami laterali si attaccano al fianco della cella, non allo spigolo.** Un
 ramo esce dalla parete laterale della cella in cui il passaggio si trova, e il
 layout registra la cella di partenza (`_takeoff`) perché il bridge possa

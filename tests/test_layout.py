@@ -904,21 +904,28 @@ def test_a_t_junction_has_an_arm_on_each_side_of_its_last_cell():
             spots = [takeoff.get(child.id) for child in node.children]
             if any(spot is None for spot in spots):
                 continue  # the junction itself was never drawn
-            assert spots[0] == spots[1], (seed, node.id, spots)
             points = _trunk_points(layout, node.id)
             if len(points) < 2:
                 continue
             a, b = points[-2], points[-1]
             steps = abs(b[0] - a[0]) + abs(b[1] - a[1])
             heading = (int((b[0] - a[0]) / steps), int((b[1] - a[1]) / steps))
-            last = spots[0]
-            sides = {
-                "sinistra": (last[0] + heading[1], last[1] - heading[0]),
-                "destra": (last[0] - heading[1], last[1] + heading[0]),
-            }
-            for name, cell in sides.items():
+            # Each arm from its own takeoff cell: on a trunk wider than one
+            # cell the two leave through opposite edges, not through the same
+            # middle cell.
+            turns = [event.get("turn")
+                     for event in node.geo.get("events", [])
+                     if event["type"] == "child"]
+            if len(turns) != 2 or set(turns) != {"left", "right"}:
+                continue
+            sides = {}
+            for child, spot, turn in zip(node.children, spots, turns):
+                step = ((heading[1], -heading[0]) if turn == "left"
+                        else (-heading[1], heading[0]))
+                sides[turn] = (child, (spot[0] + step[0], spot[1] + step[1]))
+            for name, (child, cell) in sides.items():
                 seen += 1
-                if any(cell in cells.get(child.id, set()) for child in node.children):
+                if cell in cells.get(child.id, set()):
                     continue
                 # Allowed only when the arm says why it could not be there.
                 arm = next(
@@ -993,3 +1000,62 @@ def test_a_t_junction_walks_the_length_it_rolled_before_branching():
             short += 1
     assert exact > 50, exact
     assert short <= 3, short
+
+
+def test_a_branch_off_a_wide_corridor_leaves_through_its_edge():
+    """A branch leaves the trunk through the side wall of the cell it stands
+    in - and on a trunk wider than one cell that wall is not beside the middle
+    line, it is one or two cells further out.
+
+    Taking off from the middle, a branch walked its whole first 10ft inside
+    the trunk's own flank and vanished into it: seed 72's passage 93 rolls a
+    T-junction at the end of a 20ft gallery and only one of its two arms could
+    be seen, because the other one was drawn on floor the gallery already had.
+
+    How far out is counted on the cells the run actually claimed, not on the
+    width it was rolled at: where something already drawn cut the flank short,
+    the edge is where the floor ends.
+
+    Measured over 40 seeds: of the branches off a wide trunk that draw
+    anything at all, 35 of 105 laid no floor of their own before, 5 of 102
+    after - the rest being a stairs alcove, which is walked by the stairs and
+    not by this."""
+    from dungeon_simulator import dungeongen_bridge as bridge
+
+    def cells_of(corridor):
+        out = {tuple(c) for c in corridor.get("cells", ())}
+        points = bridge._dedupe([tuple(p) for p in corridor["points"]])
+        if len(points) >= 2:
+            out |= bridge._path_cells(
+                bridge._pad_single_cell(bridge._grid_cell_path(points)))
+        return out
+
+    branches = swallowed = 0
+    for seed in range(40):
+        dungeon = DungeonGenerator(seed=seed, limitless_room_cap=20).generate()
+        for islands in compute_layout(dungeon).values():
+            for island in islands:
+                trunk, widest, own = {}, {}, {}
+                for corridor in island["corridors"]:
+                    key = corridor["id"]
+                    if not isinstance(key, str):
+                        trunk.setdefault(key, set()).update(cells_of(corridor))
+                        widest[key] = max(widest.get(key, 1), corridor["width"])
+                    if isinstance(key, str) and key.startswith("cap"):
+                        key = int(key[3:])
+                    own.setdefault(key, set()).update(cells_of(corridor))
+                for node_id, spot in (island.get("_takeoff") or {}).items():
+                    spot = tuple(spot)
+                    parent = next((pid for pid, cells in trunk.items() if spot in cells),
+                                  None)
+                    if parent is None or widest.get(parent, 1) <= 1:
+                        continue
+                    drawn = own.get(node_id, set())
+                    if not drawn:
+                        continue  # a room, a door, or a branch that was cut
+                    branches += 1
+                    if not drawn - trunk[parent]:
+                        swallowed += 1
+    assert branches > 80, branches
+    # A ceiling, not a zero: see the docstring. 35 before, 5 now.
+    assert swallowed <= 12, f"{swallowed} rami inghiottiti dal tronco su {branches}"
